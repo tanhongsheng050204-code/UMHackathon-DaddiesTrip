@@ -1,107 +1,109 @@
-import math
-import os
 import json
 import re
-import requests
+from .planner_agent import PlannerAgent
+from .booking_agent import BookingAgent
+from .budget_agent import BudgetAgent
+from .edge_agent import EdgeAgent
+from .translation_agent import TranslationAgent
 
 class OrchestratorAgent:
     def __init__(self):
-        self.ollama_url = "http://127.0.0.1:11434/api/generate"
-        self.model = "deepseek-r1:8b" 
+        self.planner = PlannerAgent()
+        self.booking = BookingAgent()
+        self.budget = BudgetAgent()
+        self.edge = EdgeAgent()
+        self.translator = TranslationAgent()
 
     def process_prompt(self, prompt: str) -> dict:
-        word_count = len(prompt.split())
-        if word_count > 1500:
-            print(f"Triggering chunking array for {word_count} words")
+        # Step 1: Planner Agent
+        print("Planner Agent working...")
+        itinerary_draft = self.planner.plan(prompt) or {"itinerary": []}
+        
+        # Parse participant count from prompt (e.g. "4 adults")
+        participants_raw = itinerary_draft.get("participants", [])
+        num_match = re.search(r'(\d+)\s*(?:adult|person|people|pax)', prompt, re.IGNORECASE)
+        if num_match:
+            n = int(num_match.group(1))
+            participants_raw = [f"Adult {i+1}" for i in range(n)]
+        elif not participants_raw:
+            participants_raw = ["User"]
+        
+        num_participants = len(participants_raw)
+        
+        # Step 2: Booking Agent
+        print("Booking Agent working...")
+        booking_details = self.booking.get_details(itinerary_draft, prompt) or {}
+        
+        # Merge booking details into itinerary safely
+        merged_itinerary = []
+        raw_itinerary = itinerary_draft.get("itinerary", [])
+        raw_details = booking_details.get("itinerary_details", [])
+        
+        for i, day in enumerate(raw_itinerary):
+            if i < len(raw_details):
+                day.update(raw_details[i])
+            merged_itinerary.append(day)
             
-        system_prompt = """
-        You are a travel orchestrator agent for DaddiesTrip.
-        The user will provide a travel prompt. You must extract and generate a structured itinerary and cost estimate.
+        # Step 3: Budget Agent
+        print("Budget Agent working...")
+        budget_match = re.search(r'RM\s*(\d+(?:,\d+)?k?|\d+)', prompt, re.IGNORECASE)
+        budget_limit_str = budget_match.group(1).replace(',', '') if budget_match else "5000"
+        if budget_limit_str.lower().endswith('k'):
+            budget_limit_myr = int(budget_limit_str[:-1]) * 1000
+        else:
+            try:
+                budget_limit_myr = int(budget_limit_str)
+            except ValueError:
+                budget_limit_myr = 5000
         
-        CRITICAL INSTRUCTION: WEB SEARCH
-        - You have access to the internet. You MUST use your web search capability to look up the CURRENT, LIVE prices for flights, hotels, attractions, and real-time currency exchange rates before finalizing your budget.
-        - Do not guess the prices. Base your budget strictly on the live search results.
+        # Use cheapest flight option for cost calculations
+        flight_options = booking_details.get("flight_options", [])
+        cheapest_flight = min(flight_options, key=lambda f: f.get("cost_myr", 9999)) if flight_options else {}
         
-        BUDGETING RULES:
-        - Your cost estimations MUST be highly realistic and reflect actual market rates found via your web search.
-        - ALWAYS factor in the cost of international/domestic flights, which alone can be $800-$1500 per person.
-        - Factor in realistic nightly accommodation costs ($100-$300/night), daily food, and transportation.
-        - For example, a 1-week trip to Japan should generally cost a minimum of $2000-$3000 USD per person.
-        
-        You MUST respond ONLY with a valid JSON object matching this schema exactly:
-        {
-            "itinerary": [
-                {
-                    "day": 1,
-                    "location": "City Name",
-                    "activities": [
-                        {"name": "Attraction Name", "cost": 50, "source": "example.com"}
-                    ],
-                    "daily_hotel_cost": 150,
-                    "daily_food_cost": 80,
-                    "daily_transport_cost": 20
-                }
-            ],
-            "flights": {
-                "cost": 1200,
-                "source": "skyscanner.com"
-            },
-            "estimated_total_cost": 2500,
-            "currency": "USD",
-            "participants": ["Participant 1", "Participant 2"],
-            "budget_recommendation": {
-                "is_sufficient": false,
-                "message": "Your budget of $1000 is too low. Flights alone cost $1200. We recommend a budget of $2500."
-            }
+        pre_budget_data = {
+            "itinerary": merged_itinerary,
+            "flight_options": flight_options,
+            "flights": cheapest_flight,   # cheapest shown by default
+            "destination_currency": booking_details.get("destination_currency", "CNY"),
+            "destination_iata": booking_details.get("destination_iata", "")
         }
-        Do not include markdown blocks or any other text outside the JSON. Ensure estimated_total_cost is a number.
-        """
-
-        full_prompt = f"{system_prompt}\n\nUser Request: {prompt}"
-
-        payload = {
-            "model": self.model,
-            "prompt": full_prompt,
-            "stream": False,
-            "format": "json",
-            "options": {
-                "num_predict": 8192,
-                "temperature": 0.3
-            }
+        
+        # PYTHON SIDE: actual sum of costs PER PERSON then × num_participants
+        cheapest_flight_cost_per_person = cheapest_flight.get("cost_myr", 0)
+        day_costs_per_person = 0
+        for day in merged_itinerary:
+            day_costs_per_person += day.get("hotel", {}).get("cost_myr", 0)
+            day_costs_per_person += day.get("daily_food_cost_myr", 0)
+            day_costs_per_person += day.get("transportation", {}).get("cost_myr", 0)
+            for act in day.get("activities", []):
+                day_costs_per_person += act.get("cost_myr", 0)
+        
+        actual_total_all = (cheapest_flight_cost_per_person + day_costs_per_person) * num_participants
+        
+        budget_optimization = self.budget.optimize(pre_budget_data, budget_limit_myr) or {}
+        
+        llm_total = budget_optimization.get("estimated_total_cost_myr", 0)
+        final_total = llm_total if isinstance(llm_total, (int, float)) and llm_total > 0 else actual_total_all
+            
+        full_data = {
+            **pre_budget_data,
+            "participants": participants_raw,
+            "estimated_total_cost_myr": final_total,
+            "budget_recommendation": budget_optimization.get("budget_recommendation", {}),
+            "saving_tips": budget_optimization.get("saving_tips", [])
         }
-
-        try:
-            # Local Ollama requests might take a bit longer depending on hardware, setting a safe timeout
-            response = requests.post(self.ollama_url, json=payload, timeout=300)
-            response.raise_for_status()
-            
-            data = response.json()
-            text = data.get("response", "")
-            
-            # Deepseek-r1 outputs <think> tags for chain-of-thought, we must strip them out
-            text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
-            
-            # Extract JSON robustly, ignoring conversational filler before/after
-            json_match = re.search(r'(\{.*\})', text, re.DOTALL)
-            if json_match:
-                text = json_match.group(1)
-            else:
-                raise ValueError("No JSON object found in AI response.")
-            
-            # Parse the JSON response
-            result = json.loads(text)
-            
-            # Basic validation
-            if "estimated_total_cost" not in result or "itinerary" not in result:
-                 raise ValueError("AI returned malformed data.")
-                 
-            return result
-        except requests.exceptions.RequestException as e:
-            print(f"Ollama API Connection Error: {e}")
-            raise ValueError(f"Failed to connect to local Ollama instance (ensure Ollama is running): {str(e)}")
-        except json.JSONDecodeError as e:
-            print(f"JSON Parsing Error: {e}\nExtracted text: {text}")
-            raise ValueError("Ambiguous destination or AI returned invalid format.")
-        except Exception as e:
-            print(f"Agent Error: {e}")
-            raise ValueError(f"AI Agent Error: {str(e)}")
+        
+        # Step 4: Edge Agent (Validation & Logic Check)
+        print("Edge Agent working...")
+        validated_data = self.edge.validate(full_data) or full_data
+        
+        # Step 5: Translation Agent
+        print("Translation Agent working...")
+        final_data = self.translator.translate(validated_data) or validated_data
+        
+        if "participants" not in final_data:
+            final_data["participants"] = participants_raw
+        if "flight_options" not in final_data:
+            final_data["flight_options"] = flight_options
+        
+        return final_data

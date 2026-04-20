@@ -5,24 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DaddiesTrip - NomadFlow</title>
     <meta name="description" content="AI-enabled cross-border travel orchestration and multi-currency group accounting.">
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=4">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="background-blur"></div>
-    <div class="container">
-        <header>
-            <h1 id="app-title">DaddiesTrip</h1>
-            <p>Your AI Travel Orchestrator</p>
+    <div class="app-container">
+        <header class="app-header">
+            <h1>NomadFlow</h1>
+            <p>Your AI-Orchestrated Travel Experience</p>
         </header>
 
-        <main>
-            <div class="glass-card chat-section">
-                <h2>Plan Your Trip</h2>
-                <div class="input-group">
-                    <textarea id="prompt-input" placeholder="E.g., Plan a 5-day trip to Tokyo for 4 people. Find the best early bird deals."></textarea>
-                    <button id="generate-btn">Generate Itinerary</button>
-                </div>
+        <main class="main-content">
+            <div class="input-section glass-card">
+                <textarea id="prompt-input" placeholder="Plan a 7-day trip to Singapore for 4 adults with a budget of RM20000..."></textarea>
+                <button id="generate-btn">Orchestrate Trip</button>
             </div>
 
             <div id="results-section" class="hidden">
@@ -34,11 +31,14 @@
                     </div>
                 </div>
                 
-                <div class="glass-card flights-section">
-                    <h2>Flights Overview</h2>
-                    <div class="flight-details">
-                        <span class="flight-cost" id="flight-cost"></span>
-                        <a href="#" class="source-link" id="flight-source" target="_blank">View Source</a>
+                <!-- Flights Section: dropdown-based -->
+                <div class="glass-card flights-section hidden">
+                    <h2>✈️ Flight Options</h2>
+                    <p class="flights-subtitle">Select a flight from KUL to your destination:</p>
+                    <div id="flight-options-list" class="flight-options-list"></div>
+                    <div class="flight-cost-footer">
+                        <span>Selected: <strong id="flight-cost" class="cost-tag">RM 0</strong></span>
+                        <a href="#" class="source-link" id="flight-source" target="_blank">Search on Skyscanner ↗</a>
                     </div>
                 </div>
 
@@ -48,27 +48,24 @@
                 </div>
 
                 <div class="glass-card ledger-section">
-                    <h2>Dynamic Ledger</h2>
+                    <h2>Budget Overview</h2>
                     <div class="split-info">
                         <div class="stat-box">
-                            <span class="label">Total Cost</span>
+                            <span class="label">Total Cost (MYR)</span>
                             <h3 id="total-cost"></h3>
                         </div>
-                        <div class="stat-box">
-                            <span class="label">Per Person</span>
+                        <div class="stat-box highlight">
+                            <span class="label">Per Person (MYR)</span>
                             <h3 id="split-person"></h3>
                         </div>
-                        <div class="stat-box highlight">
-                            <span class="label">Local (MYR)</span>
+                        <div class="stat-box highlight-secondary">
+                            <span class="label" id="local-currency-label">Local Currency</span>
                             <h3 id="split-local"></h3>
                         </div>
                     </div>
                     
                     <div class="settlement-ui">
-                        <h3>Simulate Settlement</h3>
-                        <input type="text" id="card-input" placeholder="Card Number (e.g., 4111...)">
-                        <button id="settle-btn">Settle Balance</button>
-                        <p id="settle-message"></p>
+                        <button id="review-budget-btn" class="primary-btn">Review &amp; Settle Payment</button>
                     </div>
                 </div>
             </div>
@@ -86,6 +83,102 @@
             <button id="overlay-close" class="hidden">Close</button>
         </div>
     </div>
-    <script src="app.js"></script>
+
+    <!-- Budget Modal -->
+    <div id="budget-modal" class="hidden modal-overlay">
+        <div class="modal-content glass-card">
+            <h2>Budget Breakdown</h2>
+            <div class="accounting-table">
+                <div class="table-row table-header">
+                    <span>Category</span>
+                    <span>Cost (MYR)</span>
+                </div>
+                <div class="table-row">
+                    <span>✈️ Flights</span>
+                    <span id="acc-flights">0</span>
+                </div>
+                <div class="table-row">
+                    <span>🏨 Accommodation</span>
+                    <span id="acc-hotel">0</span>
+                </div>
+                <div class="table-row">
+                    <span>🍜 Food &amp; Dining</span>
+                    <span id="acc-food">0</span>
+                </div>
+                <div class="table-row">
+                    <span>🚇 Transportation</span>
+                    <span id="acc-trans">0</span>
+                </div>
+                <div class="table-row">
+                    <span>🎟️ Activities &amp; Tickets</span>
+                    <span id="acc-act">0</span>
+                </div>
+                <div class="table-row table-footer">
+                    <span>Total (All Travellers)</span>
+                    <strong id="acc-total">0</strong>
+                </div>
+            </div>
+            
+            <!-- Premium Payment UI -->
+            <div class="payment-section">
+                <h3>Secure Payment</h3>
+                <div class="card-ui">
+                    <div class="card-preview">
+                        <div class="card-chip"></div>
+                        <div class="card-number-display" id="card-number-display">•••• •••• •••• ••••</div>
+                        <div class="card-footer-row">
+                            <div>
+                                <div class="card-label">CARD HOLDER</div>
+                                <div class="card-holder-display" id="card-holder-display">YOUR NAME</div>
+                            </div>
+                            <div>
+                                <div class="card-label">EXPIRES</div>
+                                <div class="card-expiry-display" id="card-expiry-display">MM/YY</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-fields">
+                        <div class="field-group">
+                            <label>Card Number</label>
+                            <input type="text" id="card-input" placeholder="1234 5678 9012 3456" maxlength="19" autocomplete="cc-number">
+                        </div>
+                        <div class="field-group">
+                            <label>Cardholder Name</label>
+                            <input type="text" id="card-holder" placeholder="John Doe" autocomplete="cc-name">
+                        </div>
+                        <div class="field-row">
+                            <div class="field-group">
+                                <label>Expiry</label>
+                                <input type="text" id="card-expiry" placeholder="MM/YY" maxlength="5" autocomplete="cc-exp">
+                            </div>
+                            <div class="field-group">
+                                <label>CVV</label>
+                                <input type="text" id="card-cvv" placeholder="•••" maxlength="3" autocomplete="cc-csc">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <button id="settle-btn" class="pay-btn">Pay Now</button>
+                <p id="settle-message"></p>
+            </div>
+            <button id="close-budget-btn" class="secondary-btn">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Payment Success Modal -->
+    <div id="payment-modal" class="hidden modal-overlay">
+        <div class="payment-content glass-card">
+            <div class="success-animation">
+                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="success-svg">
+                    <circle class="success-circle" cx="50" cy="50" r="45" fill="none" stroke="#34c759" stroke-width="6"/>
+                    <path class="success-check" d="M25 50 L43 68 L75 32" fill="none" stroke="#34c759" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <h3 id="payment-status-text">Payment Successful</h3>
+            <p class="payment-sub">Your trip has been booked!</p>
+        </div>
+    </div>
+
+    <script src="app.js?v=4"></script>
 </body>
 </html>

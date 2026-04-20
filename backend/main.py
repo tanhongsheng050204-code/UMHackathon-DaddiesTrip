@@ -33,10 +33,10 @@ async def plan_trip(request: TripRequest):
         # Step 1: Agent parses the prompt into itinerary and finds costs
         itinerary_data = orchestrator.process_prompt(request.prompt)
         
-        # Step 2: Ledger splits expenses
+        # Step 2: Budget splits expenses
         split_data = ledger_service.calculate_split(
-            total_cost=itinerary_data['estimated_total_cost'],
-            currency=itinerary_data['currency'],
+            total_cost_myr=itinerary_data['estimated_total_cost_myr'],
+            destination_currency=itinerary_data['destination_currency'],
             participants=itinerary_data['participants']
         )
         
@@ -44,8 +44,9 @@ async def plan_trip(request: TripRequest):
             "status": "success",
             "itinerary": itinerary_data['itinerary'],
             "flights": itinerary_data.get('flights'),
+            "flight_options": itinerary_data.get('flight_options', []),
             "budget_recommendation": itinerary_data.get('budget_recommendation'),
-            "currency": itinerary_data['currency'],
+            "destination_currency": itinerary_data.get('destination_currency', 'MYR'),
             "split": split_data
         }
     except ValueError as e:

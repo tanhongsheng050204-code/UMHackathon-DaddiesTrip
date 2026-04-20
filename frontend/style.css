@@ -424,21 +424,96 @@ button:active {
     text-decoration: underline;
 }
 
-.daily-summary {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px dashed rgba(0,0,0,0.1);
-    display: flex;
+.daily-modules {
+    margin-top: 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 1rem;
-    font-size: 0.85rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid rgba(0,0,0,0.06);
+}
+
+.module-box {
+    background: rgba(0, 0, 0, 0.02);
+    padding: 1rem;
+    border-radius: 12px;
+    border: 1px solid rgba(0,0,0,0.04);
+}
+
+.module-box h5 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
     color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+}
+
+.module-box p {
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    line-height: 1.4;
+    margin-bottom: 0.5rem;
+}
+
+.module-box .cost-tag {
+    display: inline-block;
+    font-size: 0.85rem;
+    padding: 0.1rem 0.5rem;
+}
+
+/* Flight Cards */
+.flight-cards {
+    display: flex;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
     flex-wrap: wrap;
 }
 
-.daily-summary span {
-    background: rgba(0,0,0,0.04);
-    padding: 0.3rem 0.6rem;
-    border-radius: 6px;
+.flight-card {
+    flex: 1;
+    min-width: 250px;
+    background: rgba(0,0,0,0.02);
+    border: 1px solid rgba(0,0,0,0.04);
+    border-radius: 12px;
+    padding: 1.5rem;
+    position: relative;
+}
+
+.flight-badge {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: rgba(0, 113, 227, 0.1);
+    color: var(--accent);
+    padding: 0.2rem 0.6rem;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.flight-badge.return {
+    background: rgba(52, 199, 89, 0.1);
+    color: #248a3d;
+}
+
+.flight-card h4 {
+    font-size: 1.3rem;
+    margin-bottom: 0.5rem;
+    color: var(--text-primary);
+}
+
+.flight-card p {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.flight-cost-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(0,0,0,0.06);
 }
 
 /* Budget Banner Styles */
@@ -492,4 +567,252 @@ button:active {
     font-size: 1.5rem;
     font-weight: 700;
     color: var(--text-primary);
+}
+
+/* Modals */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    width: 90%;
+    max-width: 500px;
+    padding: 2.5rem;
+    text-align: center;
+}
+
+.payment-content {
+    width: 90%;
+    max-width: 350px;
+    padding: 3rem;
+    text-align: center;
+}
+
+.accounting-table {
+    margin: 2rem 0;
+    text-align: left;
+}
+
+.table-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.8rem 0;
+    border-bottom: 1px solid rgba(0,0,0,0.05);
+}
+
+.table-header {
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    text-transform: uppercase;
+}
+
+.table-footer {
+    border-bottom: none;
+    border-top: 2px solid rgba(0,0,0,0.1);
+    font-weight: 700;
+    font-size: 1.2rem;
+    margin-top: 0.5rem;
+    padding-top: 1rem;
+}
+
+.primary-btn {
+    width: 100%;
+    background: var(--text-primary);
+    color: white;
+    border: none;
+    padding: 1rem;
+    border-radius: 12px;
+    font-weight: 600;
+    font-size: 1.1rem;
+    cursor: pointer;
+    margin-top: 1rem;
+}
+
+.secondary-btn {
+    width: 100%;
+    background: transparent;
+    color: var(--text-secondary);
+    border: none;
+    padding: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 0.5rem;
+}
+
+/* FaceID Animation */
+.faceid-container {
+    width: 100px;
+    height: 100px;
+    margin: 0 auto 1.5rem;
+    position: relative;
+}
+
+.faceid-icon svg {
+    width: 100%;
+    height: 100%;
+    color: var(--text-primary);
+}
+
+.faceid-scan .faceid-box {
+    animation: scanPulse 1s infinite alternate;
+    stroke: var(--accent);
+}
+
+.faceid-success .faceid-box, .faceid-success .faceid-smile, .faceid-success .faceid-eye {
+    display: none;
+}
+
+.faceid-success .checkmark {
+    display: block;
+    stroke-dasharray: 100;
+    stroke-dashoffset: 100;
+    animation: drawCheck 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+}
+
+@keyframes scanPulse {
+    0% { transform: scale(1); opacity: 0.8; }
+    100% { transform: scale(1.05); opacity: 1; filter: drop-shadow(0 0 8px rgba(0, 113, 227, 0.6)); }
+}
+
+@keyframes drawCheck {
+    100% { stroke-dashoffset: 0; }
+}
+
+/* Flight Options Dropdown */
+.flights-subtitle { color: var(--text-secondary); margin-bottom: 1rem; font-size: 0.95rem; }
+
+.flight-options-list { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+
+.flight-option-row {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    border-radius: 14px;
+    border: 2px solid rgba(0,0,0,0.06);
+    background: rgba(255,255,255,0.6);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.flight-option-row input[type="radio"] { accent-color: var(--accent); width: 18px; height: 18px; flex-shrink: 0; }
+.flight-option-row:hover { border-color: var(--accent); background: rgba(0,113,227,0.04); }
+.flight-option-row.selected { border-color: var(--accent); background: rgba(0,113,227,0.06); }
+.flight-option-info { flex: 1; display: flex; flex-direction: column; gap: 0.2rem; }
+.flight-airline { font-weight: 700; font-size: 1rem; }
+.flight-route { font-size: 0.85rem; color: var(--text-secondary); }
+.flight-option-price { font-weight: 700; font-size: 1.1rem; color: var(--accent); white-space: nowrap; }
+
+/* Ticket Badges */
+.activity-header { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.ticket-badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 0.2rem 0.6rem;
+    border-radius: 99px;
+}
+.ticket-badge.required { background: rgba(255,59,48,0.1); color: #c9342b; }
+.ticket-badge.free { background: rgba(52,199,89,0.12); color: #248a3d; }
+
+/* Premium Card UI */
+.card-ui { display: flex; flex-direction: column; gap: 1.25rem; margin: 1.5rem 0; }
+
+.card-preview {
+    background: linear-gradient(135deg, #1d1d1f 0%, #3a3a3c 100%);
+    border-radius: 18px;
+    padding: 1.5rem;
+    color: white;
+    min-height: 160px;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+}
+.card-preview::before {
+    content: '';
+    position: absolute;
+    top: -40px; right: -40px;
+    width: 180px; height: 180px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.05);
+}
+.card-chip {
+    width: 38px; height: 28px;
+    background: linear-gradient(135deg, #f0c040, #c89010);
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+}
+.card-number-display {
+    font-size: 1.3rem;
+    letter-spacing: 0.18em;
+    font-weight: 500;
+    margin-bottom: 1.5rem;
+}
+.card-footer-row {
+    display: flex;
+    gap: 2rem;
+}
+.card-label { font-size: 0.65rem; opacity: 0.5; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 0.2rem; }
+.card-holder-display, .card-expiry-display { font-size: 0.9rem; font-weight: 600; letter-spacing: 0.05em; }
+
+.card-fields { display: flex; flex-direction: column; gap: 0.75rem; }
+.field-group { display: flex; flex-direction: column; gap: 0.3rem; }
+.field-group label { font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); }
+.field-group input {
+    padding: 0.7rem 1rem;
+    border-radius: 10px;
+    border: 1.5px solid rgba(0,0,0,0.1);
+    background: rgba(255,255,255,0.8);
+    font-size: 1rem;
+    font-family: inherit;
+    color: var(--text-primary);
+    transition: border-color 0.2s;
+}
+.field-group input:focus { outline: none; border-color: var(--accent); }
+.field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+
+.pay-btn {
+    width: 100%;
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 1rem;
+    border-radius: 14px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 0.5rem;
+    transition: background 0.2s, transform 0.1s;
+}
+.pay-btn:hover { background: var(--accent-hover); }
+.pay-btn:active { transform: scale(0.98); }
+
+/* Payment Success Modal */
+.success-animation {
+    width: 100px;
+    height: 100px;
+    margin: 0 auto 1.5rem;
+}
+.success-svg { width: 100%; height: 100%; }
+.success-circle {
+    stroke-dasharray: 283;
+    stroke-dashoffset: 283;
+    animation: drawCircle 0.6s ease forwards;
+}
+.success-check {
+    stroke-dasharray: 80;
+    stroke-dashoffset: 80;
+    animation: drawCheck 0.5s 0.5s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+}
+.payment-sub { color: var(--text-secondary); margin-top: 0.5rem; font-size: 0.95rem; }
+
+@keyframes drawCircle {
+    100% { stroke-dashoffset: 0; }
 }
