@@ -339,12 +339,3 @@ class OrchestratorAgent:
         validated_data = self.edge.validate(full_data)
         yield {"type": "complete", "data": validated_data}
 
-    def process_prompt(self, prompt: str) -> dict:
-        """Legacy sync wrapper for test suite."""
-        final_data = {}
-        for event in self.process_prompt_stream(prompt):
-            if event.get("type") == "error":
-                raise ValueError(event.get("message"))
-            if event.get("type") == "complete":
-                final_data = event.get("data")
-        return final_data

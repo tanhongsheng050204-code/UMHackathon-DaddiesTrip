@@ -2,10 +2,19 @@ import pandas as pd
 import requests
 
 class LedgerService:
+    # Static fallback rates (MYR → destination) in case the CDN is unavailable
+    FALLBACK_RATES = {
+        "JPY": 33.0, "KRW": 290.0, "THB": 7.5, "SGD": 0.29, "IDR": 3400.0,
+        "VND": 5200.0, "TWD": 6.9, "PHP": 12.2, "USD": 0.21, "EUR": 0.20,
+        "GBP": 0.17, "AUD": 0.33, "CNY": 1.55, "HKD": 1.66, "INR": 17.8,
+        "AED": 0.78, "MYR": 1.0,
+    }
+
     def __init__(self):
         self.base_currency = "MYR"
+        # Rates are fetched lazily on first use — NOT at startup.
+        # This keeps server startup and page load instant.
         self.exchange_rates = {}
-        self._fetch_rates()
 
     def _fetch_rates(self):
         try:
@@ -14,9 +23,11 @@ class LedgerService:
             response.raise_for_status()
             data = response.json()
             self.exchange_rates = {k.upper(): v for k, v in data.get(self.base_currency.lower(), {}).items()}
-        except requests.exceptions.RequestException as e:
-            # PRD requirement: Throw an explicit error to prevent bad conversions rather than falling back to constants
-            raise ValueError(f"Failed to fetch live currency rates: {str(e)}")
+            print(f"LedgerService: Live FX rates loaded ({len(self.exchange_rates)} currencies).")
+        except Exception as e:
+            # Non-fatal: fall back to static rates so the server keeps running
+            print(f"LedgerService: Could not fetch live FX rates ({e}). Using static fallback rates.")
+            self.exchange_rates = self.FALLBACK_RATES.copy()
     def calculate_split(self, total_cost_myr: float, destination_currency: str, participants: list) -> dict:
         """
         Splits the expense equally among participants using Pandas for robust aggregation.

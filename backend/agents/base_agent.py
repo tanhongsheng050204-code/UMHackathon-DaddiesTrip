@@ -53,8 +53,43 @@ class BaseAgent:
         return AgentAPIError("An unexpected error occurred. Please try again.", detail=str(e))
 
     @staticmethod
+    def _extract_balanced_json(text, start):
+        """
+        Walk forward from `start` (which must point at '{' or '[') and return
+        the substring that forms a complete, balanced JSON structure.
+        If the structure is never closed (truncated output), returns everything
+        from start to end so the repair logic can patch it.
+        """
+        opener = text[start]
+        closer = '}' if opener == '{' else ']'
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if escape:
+                escape = False
+                continue
+            if ch == '\\':
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch in ('{', '['):
+                depth += 1
+            elif ch in ('}', ']'):
+                depth -= 1
+                if depth == 0:
+                    return text[start:i + 1]
+        # Never closed — return everything from start (truncated output)
+        return text[start:]
+
+    @staticmethod
     def _count_open_brackets(s):
-        """Count unmatched { and [ in a JSON string, respecting string literals."""
+        """Return a stack of unmatched openers in s, respecting string literals."""
         stack = []
         in_string = False
         escape = False
@@ -81,36 +116,68 @@ class BaseAgent:
     @staticmethod
     def _parse_json_robust(text):
         """
-        Parse JSON from LLM output with repair for common issues:
-        - Trailing commas before } or ]
-        - Truncated output (missing closing brackets/braces)
-        - Markdown code fences (```json ... ```)
+        Parse JSON from LLM output, handling the most common failure modes:
+
+        1. Markdown code fences  (```json ... ```)
+        2. Trailing LLM commentary after the JSON structure
+        3. Python literals        (None → null, True → true, False → false)
+        4. Unescaped control characters inside string values
+        5. Trailing commas before } or ]
+        6. Truncated output       (missing closing brackets / braces)
+        7. Single-quoted strings  (simple cases)
         """
-        # Strip markdown code fences if present
+        # ── Pre-processing ─────────────────────────────────────────────────────
+        # Strip markdown code fences
         text = re.sub(r'```(?:json)?\s*', '', text).strip()
+        text = re.sub(r'```\s*$', '', text).strip()
 
-        # Extract the outermost JSON object
-        json_match = re.search(r'(\{.*)', text, re.DOTALL)
-        if not json_match:
-            raise ValueError(f"No JSON object found in output: {text[:200]}...")
+        # Locate the start of the outermost JSON structure
+        obj_pos = text.find('{')
+        arr_pos = text.find('[')
+        if obj_pos == -1 and arr_pos == -1:
+            raise ValueError(f"No JSON found in LLM output: {text[:300]}")
+        if obj_pos == -1:
+            start = arr_pos
+        elif arr_pos == -1:
+            start = obj_pos
+        else:
+            start = min(obj_pos, arr_pos)
 
-        raw = json_match.group(1)
+        # Extract just the balanced JSON structure (ignores trailing LLM text)
+        raw = BaseAgent._extract_balanced_json(text, start)
 
-        # Try parsing as-is first
+        # ── Attempt 1: Parse the balanced extract as-is ────────────────────────
         try:
             return json.loads(raw)
         except json.JSONDecodeError:
             pass
 
-        # Repair step 1: Remove trailing commas before } or ]
-        repaired = re.sub(r',\s*([}\]])', r'\1', raw)
+        # ── Shared normalisation helper ─────────────────────────────────────────
+        def normalise(s):
+            s = re.sub(r'\bNone\b',  'null',  s)   # Python → JSON literals
+            s = re.sub(r'\bTrue\b',  'true',  s)
+            s = re.sub(r'\bFalse\b', 'false', s)
+            # Remove unescaped control chars (keep \t \n \r)
+            s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', s)
+            return s
+
+        repaired = normalise(raw)
+
+        # ── Attempt 2: After Python literal / control-char normalisation ────────
         try:
             return json.loads(repaired)
         except json.JSONDecodeError:
             pass
 
-        # Repair step 2: Close any unclosed strings, remove trailing junk, close brackets
-        # If we're inside an unclosed string, close it
+        # ── Attempt 3: Remove trailing commas before } or ] ────────────────────
+        repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass
+
+        # ── Attempt 4: Patch truncated output ──────────────────────────────────
+        # Close any unclosed string
         quote_count = 0
         esc = False
         for ch in repaired:
@@ -125,29 +192,41 @@ class BaseAgent:
         if quote_count % 2 == 1:
             repaired += '"'
 
-        # Remove trailing partial tokens (e.g. a key without value, or dangling comma)
-        repaired = re.sub(r',\s*"[^"]*"\s*:\s*$', '', repaired)  # trailing "key":
-        repaired = re.sub(r',\s*"[^"]*"\s*$', '', repaired)      # trailing "key"
-        repaired = re.sub(r',\s*$', '', repaired)                 # trailing comma
-        repaired = re.sub(r':\s*$', ': null', repaired)           # trailing colon → null
+        # Remove dangling partial tokens at the very end
+        repaired = re.sub(r',\s*"[^"]*"\s*:\s*$', '', repaired)   # trailing "key":
+        repaired = re.sub(r',\s*"[^"]*"\s*$',      '', repaired)   # trailing "key"
+        repaired = re.sub(r',\s*$',                 '', repaired)   # trailing comma
+        repaired = re.sub(r':\s*$',           ': null', repaired)   # trailing colon
 
         # Close unclosed brackets/braces (in reverse stack order)
         stack = BaseAgent._count_open_brackets(repaired)
         for opener in reversed(stack):
             repaired += '}' if opener == '{' else ']'
 
-        # Remove trailing commas again (closing may have created new ones)
+        # Remove any new trailing commas introduced by bracket-closing
         repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
 
         try:
             return json.loads(repaired)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"JSON repair failed ({e}). Raw output: {raw[:300]}...")
+        except json.JSONDecodeError:
+            pass
+
+        # ── Attempt 5: Convert single quotes to double quotes ──────────────────
+        try:
+            sq_fixed = re.sub(r"(?<!\\)'", '"', repaired)
+            return json.loads(sq_fixed)
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        raise ValueError(
+            f"JSON repair failed after all attempts. "
+            f"Raw output ({len(raw)} chars): {raw[:400]}..."
+        )
 
     def query(self, system_prompt, user_prompt, format_json=True, max_retries=1, max_tokens=4096):
         """
         Query the LLM using STREAMING mode.
-        
+
         Streaming keeps the HTTP connection alive by receiving tokens incrementally.
         This prevents Cloudflare/gateway 504 timeouts which occur when the server
         waits too long for the first byte of a non-streamed response.
@@ -171,10 +250,15 @@ class BaseAgent:
                     messages=messages,
                     temperature=0.3,
                     max_tokens=max_tokens,
-                    stream=False
+                    stream=True
                 )
 
-                text = response.choices[0].message.content if response.choices else ""
+                text = ""
+                for chunk in response:
+                    if chunk.choices and len(chunk.choices) > 0:
+                        content = chunk.choices[0].delta.content
+                        if content:
+                            text += content
 
                 if not text.strip():
                     # Treat as retryable — don't hard-fail
@@ -190,6 +274,15 @@ class BaseAgent:
                 print(f"API Error in {self.__class__.__name__} (attempt {attempt + 1}/{max_retries + 1}): {e}")
                 if attempt < max_retries:
                     time.sleep(2 * (attempt + 1))
+            except ValueError as e:
+                # JSON parse failure — log it and retry
+                last_error = AgentAPIError(
+                    "The AI returned an unexpected response format. Retrying...",
+                    detail=str(e)
+                )
+                print(f"JSON parse error in {self.__class__.__name__} (attempt {attempt + 1}/{max_retries + 1}): {e}")
+                if attempt < max_retries:
+                    time.sleep(1)
             except Exception as e:
                 last_error = self._friendly_error(e)
                 print(f"Error in {self.__class__.__name__} (attempt {attempt + 1}/{max_retries + 1}): {e}")

@@ -5,7 +5,7 @@
 <h1 align="center">DaddiesTrip</h1>
 
 <p align="center">
-  <strong>An Enterprise-Grade, AI-Enabled Cross-Border Travel Orchestration & Group Accounting Platform</strong>
+  <strong>An AI-Enabled Cross-Border Travel Orchestration & Group Accounting Platform</strong>
 </p>
 
 ## 📌 Overview
@@ -19,52 +19,46 @@
 ## 🚀 Key Features
 
 - **Conversational Planning & Validation**
-  Turn unstructured travel ideas into structured 5-day itineraries using advanced AI inference. If a prompt is invalid or the budget is too low, our AI safely halts and converses with the user to resolve the constraint.
-- **Flight & Hotel API Orchestration**
-  Provides accurate data routing with dynamically loaded airline logos based on verified IATA codes. Smart routing detects local vs. international travel and bypasses unnecessary flight steps. Each flight option is paired with a direct deep-link to Skyscanner.
+  Turn unstructured travel ideas into structured itineraries using advanced AI inference. If a prompt is missing key information (destination, dates, participants, budget), the system safely halts and asks the user for clarification.
+- **Real-time Streaming**
+  Results are streamed progressively via Server-Sent Events (SSE). The AI uses token-level streaming to prevent gateway timeouts, and partial itinerary/flight data is pushed to the frontend as soon as it's ready.
+- **Flight & Hotel Orchestration**
+  Provides accurate data routing with flight options linked directly to Skyscanner and Google Flights. Smart routing detects local vs. international travel and bypasses unnecessary flight steps.
 - **Enhanced POI (Point of Interest) Enrichment**
   Aggregates real Google Reviews, star ratings, and accurate real-world cost metrics for both daily activities and food recommendations.
 - **Smart Multi-Currency Ledger**
-  Split costs seamlessly using real-time currency conversions powered by the open, keyless Fawaz Ahmed Exchange API (`@fawazahmed0/currency-api`).
+  Splits costs equally using live currency conversions powered by the open, keyless Fawaz Ahmed Exchange API (`@fawazahmed0/currency-api`). Falls back to static rates if the CDN is unavailable.
 - **Interactive Map Integration**
-  Every generated activity is dynamically embedded as a rich local HTML iframe showing the explicit region and routing context.
-- **Enterprise UX & High-Performance Output**
-  Features a frosted-glass minimalist aesthetic, real-time Server-Sent Events (SSE) streaming with active response time telemetry, and optimized PDF generation for offline access.
+  Every generated activity is dynamically embedded as a Google Maps iframe showing the exact location.
+- **Secure Settlement UI**
+  A card payment modal allows group members to settle their share. Invalid cards (e.g., starting with `0000`) are rejected with a clear error.
 
 ---
 
-## 🧠 Enterprise Multi-Agent Architecture
+## 🧠 Multi-Agent Architecture
 
-DaddiesTrip utilizes a highly modular **Localized Multi-Agent Workflow**. Each sub-agent is strictly constrained to a single functional domain, drastically reducing hallucination cross-contamination and improving overall execution speed.
+DaddiesTrip uses a modular **4-Agent Workflow** executed sequentially. Each agent is strictly scoped to a single domain to reduce hallucination and improve speed.
 
-### 1. Analyzer Agent (The Gatekeeper)
-- **Role:** The first line of defense.
-- **Usage:** Scans the user's conversational input to ensure the request is physically possible.
-- **Prompt Logic:** Analyzes the prompt to verify 1) Destination, 2) Participants, 3) Trip dates (start to end), and 4) Minimum viable budget. If any component is missing, it outputs a strict JSON `{ "status": "invalid", "message": "..." }` and acts as a chatbot to request clarification.
+### 1. Analyzer Agent *(Pure Python — zero LLM cost)*
+- **Role:** Input validation gatekeeper.
+- **How it works:** Uses regex and keyword matching to verify 4 required fields: Destination, Trip Dates, Participants, and Budget. If any are missing, returns a structured `clarification` event with the specific missing fields so the frontend can show a targeted prompt.
 
-### 2. Planner Agent (The Navigator)
-- **Role:** Drafts the chronological structure.
-- **Usage:** Creates a high-level logical itinerary based on the user's validated request.
-- **Prompt Logic:** Enforces accurate time estimates (e.g., "09:00 - 11:30") and determines the `requires_flight` boolean flag by evaluating if the destination is international or >300km away. Generates precise map query strings.
+### 2. Planner Agent *(LLM — streamed)*
+- **Role:** Chronological itinerary drafter.
+- **How it works:** Given the validated prompt, generates a day-by-day itinerary with activities, food recommendations, transport between POIs, and a `requires_flight` flag. Output is streamed token-by-token to prevent API gateway timeouts.
 
-### 3. Booking Agent (The Concierge)
-- **Role:** Aggregates real-world bookings and POI metadata.
-- **Usage:** Finds flights, accommodations, tickets, and dining options.
-- **Prompt Logic:** Must provide exactly 3 flight options with distinct airline IATA codes and Skyscanner deep-links. For Activities and Food, it is explicitly instructed to source real Google review scores (e.g., "4.8/5"), short descriptive comments, and exact `cost_myr`. Ensures no placeholder costs (like "RM25") are used.
+### 3. Booking Agent *(LLM — streamed)*
+- **Role:** Real-world booking and cost enrichment concierge.
+- **How it works:** Receives a compressed version of the planner output and enriches each day with hotel names/costs, flight options (3 airlines with Skyscanner/Google Flights deep-links), food costs, and destination review metadata. Token streaming keeps the connection alive during generation.
 
-### 4. Budget Agent (The Financial Controller)
-- **Role:** Optimizes expenses.
-- **Usage:** Takes the gross sums, pulls live conversion rates, and trims or approves the trip cost against the user's absolute maximum budget.
-- **Prompt Logic:** Receives the fully mapped itinerary and cheapest flight option. Iterates over the total sum, compares it to the parsed budget string, and generates boolean flags (`is_sufficient`) and contextual saving tips if the budget is breached.
+### 4. Edge Agent *(Pure Python — zero LLM cost)*
+- **Role:** Quality assurance and data integrity.
+- **How it works:** Runs deterministic Python heuristic checks on the final merged JSON before it's emitted:
+  - Detects and nullifies hallucinated uniform activity costs (e.g., every activity priced at exactly RM25).
+  - Flags round-trip flights with identical departure and return airports.
+  - Ensures every itinerary day has required fields (`day`, `location`).
 
-### 5. Edge Agent (The QA Engineer)
-- **Role:** Quality Assurance and Data Integrity.
-- **Usage:** Runs deterministic Python-side heuristic checks on the final JSON before output.
-- **Prompt Logic:** Receives the errors detected by Python logic (e.g., Departure and Return airports are identical, or all ticket prices hallucinated to the exact same number) and forces the LLM to patch the JSON.
-
-### 6. Translation Agent (The Localizer)
-- **Role:** Final localization formatting.
-- **Usage:** Ensures the output is correctly formatted in the requested language while preserving JSON structural integrity and markdown formatting.
+> **Note:** The Budget Agent and Translation Agent have been removed. Budget calculation is now handled entirely in Python inside the Orchestrator (`_calculate_budget`), eliminating an LLM call and making cost computation instant and deterministic.
 
 ---
 
@@ -77,45 +71,69 @@ pip install -r backend/requirements.txt
 ```
 
 ### 2. Configure Environment Variables
-Create a `.env` file in the root directory. Configure your preferred AI model API keys.
+Create a `.env` file in the **root directory** with your LLM API credentials:
 ```env
 Z_AI_API_KEY=your_api_key_here
-Z_AI_BASE_URL=https://open.bigmodel.cn/api/paas/v4/chat/completions
+Z_AI_BASE_URL=https://api.ilmu.ai/v1/chat/completions
 Z_AI_MODEL=glm-4
 ```
 
+> The `Z_AI_BASE_URL` accepts either the base URL (`https://api.ilmu.ai/v1`) or the full completions endpoint — the server normalizes it automatically.
+
 ### 3. Start the Backend (FastAPI)
-Navigate to the root directory and start the FastAPI server.
+Run from the **root directory** of the project:
 ```bash
 uvicorn backend.main:app --reload
 ```
+The API will be available at `http://localhost:8000`.
 
-### 4. Start the Frontend (Vite)
-Navigate to the `frontend` directory, install dependencies, and start the development server.
+### 4. Start the Frontend (Vite + React)
+In a separate terminal, navigate to the `frontend` directory:
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-### 5. Access the Client
-Open your web browser and navigate to the Vite development server:
-```text
+### 5. Access the Application
+Open your browser and navigate to the Vite dev server:
+```
 http://localhost:5173
 ```
 
 ---
 
+## 📡 API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/plan-trip-stream` | Streams the full trip planning pipeline as SSE events |
+| `POST` | `/api/settle` | Simulates a card payment settlement for the group ledger |
+| `GET`  | `/api/health` | Health check — returns `{"status": "ok"}` |
+
+### SSE Event Types (`/api/plan-trip-stream`)
+
+| Event Type | Payload | When |
+|------------|---------|------|
+| `progress` | `{ text }` | Each pipeline stage starts |
+| `clarification` | `{ message, missing_fields }` | Prompt is missing required info |
+| `partial_itinerary` | `{ days, num_participants }` | Planner output ready |
+| `partial_flights` | `{ flight_options, num_participants }` | Booking output ready |
+| `complete` | Full trip data object | All agents finished |
+| `error` | `{ message }` | Any pipeline failure |
+
+---
+
 ## ⚙️ Testing & QA
 
-The application ships with a PyTest suite based on the provided Quality Assurance Testing Documentation (QATD).
+The application ships with a PyTest suite covering key acceptance criteria.
 
-Run the testing module to verify system integrity:
+Run from the root directory:
 ```bash
 pytest backend/tests/test_agents.py
 ```
 
-**Test Coverage Includes:**
-- **TC-01:** System outputs correct payload schema and verifies internal ledger split mechanics.
-- **TC-02:** System accurately flags negative/failed terminal payments using simulated mock cards.
-- **AI-01:** System correctly handles massive wall-of-text prompts exceeding 1500 tokens using algorithmic array chunking, ensuring the LLM context window does not overflow.
+**Test Coverage:**
+- **TC-01:** Verifies the full streaming pipeline returns a correct payload schema including itinerary, flights, budget, and split data.
+- **TC-02:** Verifies that invalid payment cards (starting with `0000`) are correctly rejected by the ledger service.
+- **AI-01:** Verifies that oversized prompts (>1500 words) are safely truncated before being passed to the LLM pipeline.
