@@ -8,3 +8,6 @@ build/
 .DS_Store
 .vscode/
 .idea/
+frontend/.vite/*
+backend/__pycache__/*
+backend/agents/__pycache__/*
