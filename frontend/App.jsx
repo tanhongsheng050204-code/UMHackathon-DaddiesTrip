@@ -32,6 +32,16 @@ export default function App() {
   const interimBaseRef = useRef('');
   const wantToStopRef = useRef(false);
 
+  // Settlement State
+  const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardHolder, setCardHolder] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvv, setCardCvv] = useState('');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [settleMessage, setSettleMessage] = useState('');
+
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
@@ -259,6 +269,54 @@ export default function App() {
     budget:       { icon: '💰', label: 'Budget' },
   };
 
+  const handleSettle = async () => {
+    const rawCard = cardNumber.replace(/\s/g, '');
+    if (rawCard.length < 16) {
+      setSettleMessage('Please enter a valid 16-digit card number.');
+      return;
+    }
+    setIsProcessing(true);
+    setSettleMessage('Processing...');
+    
+    try {
+      const response = await fetch('/api/settle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          group_id: "group_123", 
+          user_id: "user_1", 
+          card_number: rawCard 
+        })
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setPaymentSuccess(true);
+        setTimeout(() => {
+          setPaymentSuccess(false);
+          setShowBudgetModal(false);
+        }, 3000);
+      } else {
+        setSettleMessage(data.detail || 'Payment failed.');
+      }
+    } catch (error) {
+      setSettleMessage('Connection failed.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const getExpensesBreakdown = () => {
+    let hotel = 0, food = 0, trans = 0, act = 0;
+    itinerary.forEach(day => {
+      hotel += (day.hotel ? (day.hotel.cost_myr || 0) : 0) * numPax;
+      food += (day.daily_food_cost_myr || 0) * numPax;
+      trans += (day.transportation ? (day.transportation.cost_myr || 0) : 0) * numPax;
+      if (day.activities) day.activities.forEach(a => act += (a.cost_myr || 0) * numPax);
+    });
+    const flight = (flightOptions[selectedFlightIdx]?.cost_myr || 0) * numPax;
+    return { flight, hotel, food, trans, act, total: flight + hotel + food + trans + act };
+  };
+
   return (
     <div className="min-h-screen bg-[#FDF9F3] text-gray-800 font-serif selection:bg-rose-200 relative overflow-hidden">
       
@@ -459,33 +517,59 @@ export default function App() {
                       <h3 className="text-xl font-bold text-gray-800 mb-4 px-2">Flight Options</h3>
                       <div className="grid grid-cols-2 gap-6 mb-10">
                         {flightOptions.map((opt, i) => {
-                          const dep = opt.departure || {};
-                          const ret = opt.return || {};
-                          const airline = opt.airline || `Option ${i + 1}`;
-                          const costPerPax = opt.cost_myr || 0;
-                          const isSelected = selectedFlightIdx === i;
+                           const dep = opt.departure || {};
+                           const ret = opt.return || {};
+                           const airline = opt.airline || `Option ${i + 1}`;
+                           const costPerPax = opt.cost_myr || 0;
+                           const isSelected = selectedFlightIdx === i;
 
-                          return (
-                            <div key={i} onClick={() => setSelectedFlightIdx(i)} className={`border rounded-2xl p-6 transition-colors cursor-pointer group ${isSelected ? 'border-[#DE8170] bg-white shadow-md' : 'border-gray-200 bg-gray-50 hover:border-[#DE8170] hover:bg-white'}`}>
-                              <div className="flex justify-between items-center mb-4">
-                                <span className="font-semibold text-gray-700">{airline}</span>
-                                <span className={`text-xs font-bold px-3 py-1 rounded-full ${isSelected ? 'bg-[#DE8170]/10 text-[#DE8170]' : 'bg-gray-200 text-gray-700'}`}>RM {costPerPax}</span>
-                              </div>
-                              <div className="flex justify-between items-center text-sm text-gray-500 mb-6">
-                                <div className="text-center">
-                                  <div className="text-2xl font-bold text-gray-800 mb-1">{dep.airport || 'KUL'}</div>
-                                  {dep.time || 'TBD'}
-                                </div>
-                                <div className="flex-1 border-t-2 border-dashed border-gray-300 mx-4 relative">
-                                  <Plane size={16} className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 transition-colors ${isSelected ? 'text-[#DE8170]' : 'text-gray-400 group-hover:text-[#DE8170]'}`} />
-                                </div>
-                                <div className="text-center">
-                                  <div className="text-2xl font-bold text-gray-800 mb-1">{ret.airport || 'DPS'}</div>
-                                  {ret.arrival_time || 'TBD'}
-                                </div>
-                              </div>
-                            </div>
-                          );
+                           // Build date-specific Skyscanner link
+                           let skyscannerHref = opt.source || '#';
+                           if (skyscannerHref === '#' || !skyscannerHref.includes('/kul/')) {
+                             const destIATA = (ret.airport || '').toLowerCase() || 'sin';
+                             const depD = (dep.date || '').replace(/-/g, '');
+                             const retD = (ret.date || '').replace(/-/g, '');
+                             if (depD.length >= 8 && retD.length >= 8) {
+                               skyscannerHref = `https://www.skyscanner.com.my/transport/flights/kul/${destIATA}/${depD.slice(2)}/${retD.slice(2)}/`;
+                             }
+                           }
+
+                           // Build Google Flights link
+                           let googleFlightsHref = opt.google_flights || '#';
+                           if (googleFlightsHref === '#' || !googleFlightsHref.includes('on+')) {
+                             const destIATA = ret.airport || 'SIN';
+                             const airlineName = (opt.airline || '').replace(/\s+/g, '+');
+                             const depDateStr = dep.date || '';
+                             if (depDateStr) {
+                               googleFlightsHref = `https://www.google.com/travel/flights?q=Flights+from+KUL+to+${destIATA}+on+${depDateStr}${airlineName ? '+with+' + airlineName : ''}&curr=MYR&hl=en&gl=MY`;
+                             }
+                           }
+
+                           return (
+                             <div key={i} onClick={() => setSelectedFlightIdx(i)} className={`border rounded-2xl p-6 transition-colors cursor-pointer group ${isSelected ? 'border-[#DE8170] bg-white shadow-md' : 'border-gray-200 bg-gray-50 hover:border-[#DE8170] hover:bg-white'}`}>
+                               <div className="flex justify-between items-center mb-4">
+                                 <span className="font-semibold text-gray-700">{airline}</span>
+                                 <span className={`text-xs font-bold px-3 py-1 rounded-full ${isSelected ? 'bg-[#DE8170]/10 text-[#DE8170]' : 'bg-gray-200 text-gray-700'}`}>RM {costPerPax}</span>
+                               </div>
+                               <div className="flex justify-between items-center text-sm text-gray-500 mb-4">
+                                 <div className="text-center">
+                                   <div className="text-2xl font-bold text-gray-800 mb-1">{dep.airport || 'KUL'}</div>
+                                   {dep.time || 'TBD'}
+                                 </div>
+                                 <div className="flex-1 border-t-2 border-dashed border-gray-300 mx-4 relative">
+                                   <Plane size={16} className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 transition-colors ${isSelected ? 'text-[#DE8170]' : 'text-gray-400 group-hover:text-[#DE8170]'}`} />
+                                 </div>
+                                 <div className="text-center">
+                                   <div className="text-2xl font-bold text-gray-800 mb-1">{ret.airport || 'DPS'}</div>
+                                   {ret.arrival_time || 'TBD'}
+                                 </div>
+                               </div>
+                               <div className="flex gap-2 mt-4">
+                                 <a href={skyscannerHref} target="_blank" rel="noopener" className="text-xs font-medium text-[#DE8170] hover:underline" onClick={(e) => e.stopPropagation()}>Skyscanner ↗</a>
+                                 <a href={googleFlightsHref} target="_blank" rel="noopener" className="text-xs font-medium text-[#DE8170] hover:underline" onClick={(e) => e.stopPropagation()}>Google Flights ↗</a>
+                               </div>
+                             </div>
+                           );
                         })}
                       </div>
                     </>
@@ -505,18 +589,24 @@ export default function App() {
                         <h4 className="text-lg font-bold text-gray-800 mb-6 ml-4">{dayLocation}</h4>
 
                         <div className="ml-4 space-y-6">
-                          {dayActivities.length > 0 ? dayActivities.map((act, actIdx) => (
-                            <div key={actIdx} className="bg-gray-50 rounded-xl p-5 border border-gray-100 hover:shadow-md transition-shadow relative">
-                              <span className="absolute top-5 right-5 text-xs font-bold bg-gray-200 text-gray-700 px-2 py-1 rounded">RM {act.cost_myr || 0}</span>
-                              <h5 className="font-bold text-gray-800 mb-2">{act.name}</h5>
-                              <p className="text-sm text-gray-500 mb-2">{act.schedule || 'Flexible'} • {dayLocation}</p>
-                              {act.rating && (
-                                <div className="text-xs font-medium text-yellow-600 bg-yellow-50 inline-block px-2 py-1 rounded">
-                                  ★ {act.rating}
+                          {dayActivities.length > 0 ? dayActivities.map((act, actIdx) => {
+                            const embedMap = `https://maps.google.com/maps?q=${encodeURIComponent((act.name || 'location') + ' ' + dayLocation)}&t=&z=14&ie=UTF8&iwloc=&output=embed`;
+                            return (
+                              <div key={actIdx} className="bg-gray-50 rounded-xl p-5 border border-gray-100 hover:shadow-md transition-shadow relative">
+                                <span className="absolute top-5 right-5 text-xs font-bold bg-gray-200 text-gray-700 px-2 py-1 rounded">RM {act.cost_myr || 0}</span>
+                                <h5 className="font-bold text-gray-800 mb-2">{act.name}</h5>
+                                <p className="text-sm text-gray-500 mb-2">{act.schedule || 'Flexible'} • {dayLocation}</p>
+                                {act.rating && (
+                                  <div className="text-xs font-medium text-yellow-600 bg-yellow-50 inline-block px-2 py-1 rounded mb-2">
+                                    ★ {act.rating}
+                                  </div>
+                                )}
+                                <div className="rounded-lg overflow-hidden border border-gray-200 h-24 w-full max-w-sm">
+                                  <iframe src={embedMap} width="100%" height="100%" style={{ border: 0 }} allowFullScreen="" loading="lazy"></iframe>
                                 </div>
-                              )}
-                            </div>
-                          )) : (
+                              </div>
+                            );
+                          }) : (
                             <p className="text-gray-400 italic">No specific activities planned.</p>
                           )}
                         </div>
@@ -619,27 +709,16 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Currency Converter Placeholder */}
                     <div>
-                      <h3 className="text-xl font-bold text-gray-800 mb-6">Currency Converter</h3>
-                      <div className="mt-8 bg-gray-50 p-6 rounded-2xl border border-gray-200">
-                        <h4 className="font-bold text-gray-700 text-sm mb-4">Quick Converter</h4>
-                        <div className="flex space-x-2">
-                          <select className="flex-1 bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#DE8170]/50">
-                            <option>MYR Malaysian Ringgit</option>
-                          </select>
-                          <div className="flex items-center justify-center px-2 text-gray-400">
-                            <ChevronRight size={16} />
-                          </div>
-                          <select className="flex-1 bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#DE8170]/50">
-                            <option>{splitData?.destination_currency || 'USD'}</option>
-                          </select>
-                        </div>
-                        <div className="mt-4 pt-4 border-t border-gray-200 flex justify-between items-end">
-                          <span className="text-sm text-gray-500">Total in MYR</span>
-                          <span className="font-serif font-bold text-2xl text-gray-800">RM {getGrandTotal().toLocaleString()}</span>
-                        </div>
-                      </div>
+                      <h3 className="text-xl font-bold text-gray-800 mb-6">Settlement</h3>
+                      <button 
+                        onClick={() => setShowBudgetModal(true)}
+                        className="w-full bg-[#DE8170] text-white py-4 rounded-2xl font-bold shadow-lg hover:bg-[#d4705f] transition-all flex items-center justify-center gap-2"
+                      >
+                        <Receipt size={20} />
+                        Review & Settle Balance
+                      </button>
+                      <p className="text-xs text-gray-400 mt-3 text-center">Secure checkout powered by DaddiesTrip Ledger</p>
                     </div>
                   </div>
                 </>
@@ -649,6 +728,140 @@ export default function App() {
 
         </div>
       </main>
+
+      {/* Settlement Modal */}
+      {showBudgetModal && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-6">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-10 relative">
+            <button onClick={() => setShowBudgetModal(false)} className="absolute top-6 right-6 text-gray-400 hover:text-gray-600">
+              <X size={24} />
+            </button>
+            
+            <div className="grid grid-cols-2 gap-12">
+              {/* Breakdown Table */}
+              <div>
+                <h2 className="text-3xl font-serif font-bold text-gray-800 mb-6">Budget Breakdown</h2>
+                <div className="space-y-4 font-sans">
+                  {Object.entries(getExpensesBreakdown()).map(([key, val]) => {
+                    if (key === 'total') return null;
+                    const labels = { flight: '✈️ Flights', hotel: '🏨 Accommodation', food: '🍜 Food & Dining', trans: '🚇 Transportation', act: '🎟️ Activities' };
+                    return (
+                      <div key={key} className="flex justify-between py-2 border-b border-gray-100">
+                        <span className="text-gray-600">{labels[key]}</span>
+                        <span className="font-bold">RM {val.toLocaleString()}</span>
+                      </div>
+                    );
+                  })}
+                  <div className="flex justify-between py-4 bg-gray-50 px-4 rounded-xl mt-4">
+                    <span className="font-bold text-gray-800">Total (All Travelers)</span>
+                    <span className="font-bold text-[#DE8170] text-xl">RM {getExpensesBreakdown().total.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment UI */}
+              <div className="font-sans">
+                <h3 className="text-xl font-bold text-gray-800 mb-6">Secure Payment</h3>
+                
+                {/* Visual Card */}
+                <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl p-6 text-white shadow-xl mb-8 relative overflow-hidden h-48 flex flex-col justify-between">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16"></div>
+                  <div className="w-12 h-10 bg-amber-400/20 rounded-md border border-amber-400/30"></div>
+                  <div className="text-2xl tracking-[0.25em] font-mono">
+                    {cardNumber || '•••• •••• •••• ••••'}
+                  </div>
+                  <div className="flex justify-between items-end uppercase text-[10px] tracking-widest">
+                    <div>
+                      <div className="opacity-50 mb-1">Card Holder</div>
+                      <div className="text-sm tracking-normal">{cardHolder || 'YOUR NAME'}</div>
+                    </div>
+                    <div>
+                      <div className="opacity-50 mb-1">Expires</div>
+                      <div className="text-sm tracking-normal">{cardExpiry || 'MM/YY'}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">Card Number</label>
+                    <input 
+                      type="text" 
+                      placeholder="1234 5678 9012 3456"
+                      value={cardNumber}
+                      onChange={(e) => {
+                        let val = e.target.value.replace(/\D/g, '').substring(0, 16);
+                        let formatted = val.match(/.{1,4}/g)?.join(' ') || val;
+                        setCardNumber(formatted);
+                      }}
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[#DE8170]/30"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">Cardholder Name</label>
+                    <input 
+                      type="text" 
+                      placeholder="John Doe"
+                      value={cardHolder}
+                      onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
+                      className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[#DE8170]/30"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">Expiry</label>
+                      <input 
+                        type="text" 
+                        placeholder="MM/YY"
+                        value={cardExpiry}
+                        onChange={(e) => {
+                          let val = e.target.value.replace(/\D/g, '').substring(0, 4);
+                          if (val.length >= 3) val = val.substring(0, 2) + '/' + val.substring(2);
+                          setCardExpiry(val);
+                        }}
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[#DE8170]/30"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">CVV</label>
+                      <input 
+                        type="password" 
+                        placeholder="•••"
+                        maxLength="3"
+                        value={cardCvv}
+                        onChange={(e) => setCardCvv(e.target.value.replace(/\D/g, ''))}
+                        className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-[#DE8170]/30"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={handleSettle}
+                  disabled={isProcessing}
+                  className="w-full bg-[#DE8170] text-white py-4 rounded-xl font-bold mt-8 shadow-lg hover:bg-[#d4705f] disabled:opacity-50 transition-all"
+                >
+                  {isProcessing ? 'Processing...' : 'Pay Now'}
+                </button>
+                {settleMessage && <p className={`mt-2 text-center text-sm font-medium ${settleMessage.includes('Success') ? 'text-green-600' : 'text-red-500'}`}>{settleMessage}</p>}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Animation Overlay */}
+      {paymentSuccess && (
+        <div className="fixed inset-0 bg-white/95 z-[70] flex flex-col items-center justify-center animate-in fade-in duration-500">
+          <div className="w-24 h-24 rounded-full border-4 border-green-500 flex items-center justify-center mb-6">
+            <svg className="w-12 h-12 text-green-500 animate-in zoom-in duration-500 delay-200 fill-none stroke-current stroke-[4]" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h3 className="text-3xl font-serif font-bold text-gray-800">Payment Successful</h3>
+          <p className="text-gray-500 font-sans mt-2">Your trip has been booked!</p>
+        </div>
+      )}
     </div>
   );
 }
