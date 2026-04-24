@@ -119,17 +119,29 @@ class BaseAgent:
         Parse JSON from LLM output, handling the most common failure modes:
 
         1. Markdown code fences  (```json ... ```)
-        2. Trailing LLM commentary after the JSON structure
-        3. Python literals        (None → null, True → true, False → false)
-        4. Unescaped control characters inside string values
-        5. Trailing commas before } or ]
-        6. Truncated output       (missing closing brackets / braces)
-        7. Single-quoted strings  (simple cases)
+        2. Markdown headers / bold before JSON  (**JSON:**, # Heading)
+        3. JS-style comments      (// comment)
+        4. Trailing LLM commentary after the JSON structure
+        5. Python literals        (None → null, True → true, False → false)
+        6. Unescaped control characters inside string values
+        7. Trailing commas before } or ]
+        8. Truncated output       (missing closing brackets / braces)
+        9. Single-quoted strings  (simple cases)
+        10. NaN / Infinity values
+        11. Missing commas between } ] and { [
         """
         # ── Pre-processing ─────────────────────────────────────────────────────
         # Strip markdown code fences
         text = re.sub(r'```(?:json)?\s*', '', text).strip()
         text = re.sub(r'```\s*$', '', text).strip()
+
+        # Strip markdown bold/headers that appear before the JSON
+        text = re.sub(r'^\s*\*\*.*?\*\*\s*$', '', text, flags=re.MULTILINE)
+        text = re.sub(r'^\s*#{1,6}\s+.*$', '', text, flags=re.MULTILINE)
+        text = text.strip()
+
+        # Remove JS-style single-line comments (// ...)
+        text = re.sub(r'//[^\n]*', '', text)
 
         # Locate the start of the outermost JSON structure
         obj_pos = text.find('{')
@@ -146,9 +158,21 @@ class BaseAgent:
         # Extract just the balanced JSON structure (ignores trailing LLM text)
         raw = BaseAgent._extract_balanced_json(text, start)
 
+        # ── Helper: recursively replace NaN/Infinity in parsed objects ──────────
+        def sanitize(obj):
+            if isinstance(obj, float):
+                if obj != obj or obj == float('inf') or obj == float('-inf'):
+                    return None
+                return obj
+            if isinstance(obj, dict):
+                return {k: sanitize(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [sanitize(v) for v in obj]
+            return obj
+
         # ── Attempt 1: Parse the balanced extract as-is ────────────────────────
         try:
-            return json.loads(raw)
+            return sanitize(json.loads(raw, parse_constant=lambda x: None))
         except json.JSONDecodeError:
             pass
 
@@ -157,6 +181,8 @@ class BaseAgent:
             s = re.sub(r'\bNone\b',  'null',  s)   # Python → JSON literals
             s = re.sub(r'\bTrue\b',  'true',  s)
             s = re.sub(r'\bFalse\b', 'false', s)
+            s = re.sub(r'\bNaN\b',   'null',  s)   # NaN → null
+            s = re.sub(r'\bInfinity\b', 'null', s)  # Infinity → null
             # Remove unescaped control chars (keep \t \n \r)
             s = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', s)
             return s
@@ -165,14 +191,18 @@ class BaseAgent:
 
         # ── Attempt 2: After Python literal / control-char normalisation ────────
         try:
-            return json.loads(repaired)
+            return sanitize(json.loads(repaired, parse_constant=lambda x: None))
         except json.JSONDecodeError:
             pass
 
         # ── Attempt 3: Remove trailing commas before } or ] ────────────────────
         repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
+
+        # Insert missing commas between } or ] followed by { or [
+        repaired = re.sub(r'([}\]])\s*([{\[])', r'\1,\2', repaired)
+
         try:
-            return json.loads(repaired)
+            return sanitize(json.loads(repaired, parse_constant=lambda x: None))
         except json.JSONDecodeError:
             pass
 
@@ -207,14 +237,14 @@ class BaseAgent:
         repaired = re.sub(r',\s*([}\]])', r'\1', repaired)
 
         try:
-            return json.loads(repaired)
+            return sanitize(json.loads(repaired, parse_constant=lambda x: None))
         except json.JSONDecodeError:
             pass
 
         # ── Attempt 5: Convert single quotes to double quotes ──────────────────
         try:
             sq_fixed = re.sub(r"(?<!\\)'", '"', repaired)
-            return json.loads(sq_fixed)
+            return sanitize(json.loads(sq_fixed, parse_constant=lambda x: None))
         except (json.JSONDecodeError, Exception):
             pass
 
@@ -223,13 +253,15 @@ class BaseAgent:
             f"Raw output ({len(raw)} chars): {raw[:400]}..."
         )
 
-    def query(self, system_prompt, user_prompt, format_json=True, max_retries=1, max_tokens=4096):
+    def query(self, system_prompt, user_prompt, format_json=True, max_retries=2, max_tokens=4096):
         """
         Query the LLM using STREAMING mode.
 
-        Streaming keeps the HTTP connection alive by receiving tokens incrementally.
-        This prevents Cloudflare/gateway 504 timeouts which occur when the server
-        waits too long for the first byte of a non-streamed response.
+        Handles:
+        - Truncation (finish_reason="length"): auto-retry with doubled max_tokens
+        - Empty responses: retry
+        - JSON parse failures: retry
+        - API errors: retry with backoff
         """
         messages = [
             {"role": "system", "content": system_prompt},
@@ -239,53 +271,81 @@ class BaseAgent:
         if not self.api_key or self.api_key == "your_zai_api_key_here":
             raise AgentAPIError("Missing valid API key. Please configure your .env file.")
 
+        current_max_tokens = max_tokens
         last_error = None
-        for attempt in range(max_retries + 1):
+        attempt = 0
+        max_attempts = max_retries + 1 + 2  # extra room for truncation retries
+
+        while attempt < max_attempts:
             try:
-                # Use streaming to prevent gateway timeouts.
-                # With stream=True, tokens arrive incrementally, keeping the
-                # connection alive even if full generation takes 60+ seconds.
+                text = ""
+                finish_reason = None
+
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    temperature=0.3,
-                    max_tokens=max_tokens,
+                    temperature=0.1,
+                    max_tokens=current_max_tokens,
                     stream=True
                 )
 
-                text = ""
                 for chunk in response:
                     if chunk.choices and len(chunk.choices) > 0:
-                        content = chunk.choices[0].delta.content
-                        if content:
-                            text += content
+                        delta = chunk.choices[0].delta
+                        if delta.content:
+                            text += delta.content
+                        if chunk.choices[0].finish_reason:
+                            finish_reason = chunk.choices[0].finish_reason
+
+                if finish_reason == "content_filter":
+                    print(f"WARNING: {self.__class__.__name__} response filtered by API content filter")
+                    raise ValueError("Response blocked by content filter.")
+
+                # Truncation: retry with more tokens instead of accepting broken JSON
+                if finish_reason == "length":
+                    old_limit = current_max_tokens
+                    current_max_tokens = min(current_max_tokens * 2, 16000)
+                    if current_max_tokens > old_limit:
+                        print(f"WARNING: {self.__class__.__name__} hit max_tokens={old_limit}, retrying with {current_max_tokens}")
+                        attempt += 1
+                        continue
+                    else:
+                        print(f"WARNING: {self.__class__.__name__} still truncated at max_tokens={current_max_tokens}")
 
                 if not text.strip():
-                    # Treat as retryable — don't hard-fail
                     raise ValueError("LLM returned empty response.")
 
                 if format_json:
-                    return self._parse_json_robust(text)
+                    try:
+                        return self._parse_json_robust(text)
+                    except ValueError as e:
+                        print(f"JSON PARSE FAILED in {self.__class__.__name__}: {e}")
+                        print(f"Raw output (first 500 chars): {text[:500]}")
+                        raise
                 return text
+
             except AgentAPIError:
                 raise
             except (APITimeoutError, APIConnectionError, APIStatusError) as e:
                 last_error = self._friendly_error(e)
-                print(f"API Error in {self.__class__.__name__} (attempt {attempt + 1}/{max_retries + 1}): {e}")
-                if attempt < max_retries:
-                    time.sleep(2 * (attempt + 1))
+                print(f"API Error in {self.__class__.__name__} (attempt {attempt + 1}): {e}")
+                attempt += 1
+                if attempt < max_attempts:
+                    time.sleep(2)
             except ValueError as e:
-                # JSON parse failure — log it and retry
                 last_error = AgentAPIError(
                     "The AI returned an unexpected response format. Retrying...",
                     detail=str(e)
                 )
-                print(f"JSON parse error in {self.__class__.__name__} (attempt {attempt + 1}/{max_retries + 1}): {e}")
-                if attempt < max_retries:
+                print(f"JSON parse error in {self.__class__.__name__} (attempt {attempt + 1}): {e}")
+                attempt += 1
+                if attempt < max_attempts:
                     time.sleep(1)
             except Exception as e:
                 last_error = self._friendly_error(e)
-                print(f"Error in {self.__class__.__name__} (attempt {attempt + 1}/{max_retries + 1}): {e}")
-                if attempt < max_retries:
-                    time.sleep(2 * (attempt + 1))
+                print(f"Error in {self.__class__.__name__} (attempt {attempt + 1}): {e}")
+                attempt += 1
+                if attempt < max_attempts:
+                    time.sleep(2)
+
         raise last_error

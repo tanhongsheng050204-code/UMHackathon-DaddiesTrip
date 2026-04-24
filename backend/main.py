@@ -3,6 +3,7 @@ from fastapi.responses import StreamingResponse
 import json
 from pydantic import BaseModel
 from backend.agents.mock_agents import OrchestratorAgent
+from backend.agents.booking_agent import BookingAgent
 from backend.agents.base_agent import AgentAPIError
 from backend.ledger.ledger_service import LedgerService
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +29,7 @@ class SettlementRequest(BaseModel):
 
 ledger_service = LedgerService()
 orchestrator = OrchestratorAgent()
+booking_agent = BookingAgent()
 
 @app.post("/api/plan-trip-stream")
 async def plan_trip_stream(request: TripRequest):
@@ -56,6 +58,27 @@ async def settle_balance(request: SettlementRequest):
         raise HTTPException(status_code=400, detail=message)
     
     return {"status": "success", "message": message}
+
+class AmendRequest(BaseModel):
+    item_type: str  # "hotel", "food", "activity"
+    current_item: dict
+    user_preference: str
+    trip_summary: dict
+
+@app.post("/api/amend-item")
+async def amend_item(request: AmendRequest):
+    try:
+        result = booking_agent.amend_item(
+            item_type=request.item_type,
+            current_item=request.current_item,
+            user_preference=request.user_preference,
+            trip_summary=request.trip_summary,
+        )
+        return {"status": "success", "data": result}
+    except AgentAPIError as e:
+        raise HTTPException(status_code=502, detail=e.user_message)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/health")
 async def health_check():

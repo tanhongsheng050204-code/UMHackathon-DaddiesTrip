@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plane, Calendar, Receipt, Send, ChevronRight, Mic, MicOff, AlertCircle, Loader2, X, AlertTriangle, ClipboardList } from 'lucide-react';
+import { Plane, Calendar, Receipt, Send, ChevronRight, Mic, MicOff, AlertCircle, Loader2, X, AlertTriangle, ClipboardList, Download, Pencil } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('plan');
 
   // Logic State
   const [prompt, setPrompt] = useState('');
-  
+
   // Overlay & Error State
   const [overlayState, setOverlayState] = useState('hidden'); // 'hidden', 'loading', 'error'
   const [progressStatus, setProgressStatus] = useState('');
   const [progressPercent, setProgressPercent] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
-  
+
   // Clarification State
   const [clarificationMsg, setClarificationMsg] = useState('');
   const [missingFields, setMissingFields] = useState([]);
@@ -41,6 +41,87 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [settleMessage, setSettleMessage] = useState('');
+
+  // Booking Animation State
+  const BOOKING_STEPS = [
+    { icon: '✈️', label: 'Booking Flight Tickets' },
+    { icon: '🏨', label: 'Reserving Hotel Rooms' },
+    { icon: '🎟️', label: 'Purchasing Attraction Tickets' },
+    { icon: '🍜', label: 'Arranging Restaurant Reservations' },
+    { icon: '🚕', label: 'Setting Up Transport' },
+    { icon: '📋', label: 'Generating Travel Itinerary' },
+  ];
+  const [bookingSteps, setBookingSteps] = useState(
+    BOOKING_STEPS.map(s => ({ ...s, status: 'pending' }))
+  );
+  const [bookingComplete, setBookingComplete] = useState(false);
+
+  // Completion Toast State
+  const [showReadyToast, setShowReadyToast] = useState(false);
+
+  // Amend/Edit State
+  const [editingItem, setEditingItem] = useState(null); // { dayIdx, itemType, itemIdx }
+  const [editPreference, setEditPreference] = useState('');
+  const [amendLoading, setAmendLoading] = useState(false);
+
+  // Sound effect helper
+  const playSuccessSound = () => {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const notes = [523.25, 659.25, 783.99]; // C5, E5, G5 — pleasant major chord arpeggio
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.15);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.15 + 0.5);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime + i * 0.15);
+        osc.stop(ctx.currentTime + i * 0.15 + 0.5);
+      });
+    } catch (_) {}
+  };
+
+  useEffect(() => {
+    if (!paymentSuccess) return;
+    setBookingComplete(false);
+    setBookingSteps(BOOKING_STEPS.map(s => ({ ...s, status: 'pending' })));
+
+    const stepDelay = 1200;
+    let i = 0;
+
+    // Set first step to active after confirming payment
+    const confirmTimer = setTimeout(() => {
+      setBookingSteps(prev => prev.map((s, idx) => idx === 0 ? { ...s, status: 'active' } : s));
+
+      const interval = setInterval(() => {
+        // Mark current step done, activate next
+        setBookingSteps(prev => {
+          const next = [...prev];
+          next[i] = { ...next[i], status: 'done' };
+          i++;
+          if (i < next.length) {
+            next[i] = { ...next[i], status: 'active' };
+          }
+          return next;
+        });
+
+        if (i >= BOOKING_STEPS.length) {
+          clearInterval(interval);
+          setBookingComplete(true);
+          playSuccessSound();
+          // Auto-dismiss after showing success
+          setTimeout(() => {
+            setPaymentSuccess(false);
+            setBookingComplete(false);
+            setShowBudgetModal(false);
+          }, 2500);
+        }
+      }, stepDelay);
+    }, 800);
+  }, [paymentSuccess]);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -86,7 +167,7 @@ export default function App() {
           try {
             recognition.start();
             return;
-          } catch (_) {}
+          } catch (_) { }
         }
         setIsRecording(false);
         wantToStopRef.current = false;
@@ -162,13 +243,13 @@ export default function App() {
       if (!response.ok) {
         let errDetail = `HTTP ${response.status}`;
         if (response.status === 504 || response.status === 502) {
-            errDetail = 'The AI service is temporarily unavailable (gateway timeout). Please wait a moment and try again.';
+          errDetail = 'The AI service is temporarily unavailable (gateway timeout). Please wait a moment and try again.';
         } else if (response.status === 429) {
-            errDetail = 'Too many requests. Please wait a moment and try again.';
+          errDetail = 'Too many requests. Please wait a moment and try again.';
         } else if (response.status >= 500) {
-            errDetail = `Server error (HTTP ${response.status}). Please try again later.`;
+          errDetail = `Server error (HTTP ${response.status}). Please try again later.`;
         } else {
-            try { const errData = await response.json(); errDetail = errData.detail || errDetail; } catch (_) {}
+          try { const errData = await response.json(); errDetail = errData.detail || errDetail; } catch (_) { }
         }
         throw new Error(errDetail);
       }
@@ -227,23 +308,27 @@ export default function App() {
         }
         if (isClarification) break;
       }
-      
+
       if (!success && !isClarification) {
         throw new Error('Server stopped responding. Try a simpler prompt.');
       }
-      
+
     } catch (error) {
       const msg = error.name === 'TypeError' && error.message.includes('Failed to fetch')
-          ? 'Unable to connect to the server. Please check your internet connection and try again.'
-          : error.message;
+        ? 'Unable to connect to the server. Please check your internet connection and try again.'
+        : error.message;
       setErrorMsg(msg);
       setOverlayState('error');
       return; // Early return to prevent hiding overlay
-    } 
+    }
 
     if (success) {
+      setShowReadyToast(true);
       setTimeout(() => setOverlayState('hidden'), 500);
-      setActiveTab('itinerary');
+      setTimeout(() => {
+        setShowReadyToast(false);
+        setActiveTab('itinerary');
+      }, 2000);
     } else if (isClarification) {
       setOverlayState('hidden');
     }
@@ -252,10 +337,17 @@ export default function App() {
   const getGrandTotal = () => {
     let hotelTotal = 0, foodTotal = 0, transTotal = 0, actTotal = 0;
     itinerary.forEach(day => {
-        hotelTotal += (day.hotel ? (day.hotel.cost_myr || 0) : 0) * numPax;
-        foodTotal += (day.daily_food_cost_myr || 0) * numPax;
-        transTotal += (day.transportation ? (day.transportation.cost_myr || 0) : 0) * numPax;
-        if (day.activities) day.activities.forEach(act => actTotal += (act.cost_myr || 0) * numPax);
+      hotelTotal += (day.hotel ? (day.hotel.cost_myr || 0) : 0) * numPax;
+      foodTotal += (day.daily_food_cost_myr || 0) * numPax;
+      transTotal += (day.transportation ? (day.transportation.cost_myr || 0) : 0) * numPax;
+      if (day.activities) {
+        day.activities.forEach(act => {
+          actTotal += (act.cost_myr || 0) * numPax;
+          if (act.transport_to_next) {
+            transTotal += (act.transport_to_next.estimated_cost_myr || 0) * numPax;
+          }
+        });
+      }
     });
     const flightCostPerPax = flightOptions[selectedFlightIdx] ? (flightOptions[selectedFlightIdx].cost_myr || 0) : 0;
     const flightCostTotal = flightCostPerPax * numPax;
@@ -263,10 +355,10 @@ export default function App() {
   };
 
   const PILL_MAP = {
-    destination:  { icon: '📍', label: 'Destination' },
-    trip_dates:   { icon: '🗓️', label: 'Trip Dates' },
+    destination: { icon: '📍', label: 'Destination' },
+    trip_dates: { icon: '🗓️', label: 'Trip Dates' },
     participants: { icon: '👥', label: 'Participants' },
-    budget:       { icon: '💰', label: 'Budget' },
+    budget: { icon: '💰', label: 'Budget' },
   };
 
   const handleSettle = async () => {
@@ -277,24 +369,20 @@ export default function App() {
     }
     setIsProcessing(true);
     setSettleMessage('Processing...');
-    
+
     try {
       const response = await fetch('/api/settle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          group_id: "group_123", 
-          user_id: "user_1", 
-          card_number: rawCard 
+        body: JSON.stringify({
+          group_id: "group_123",
+          user_id: "user_1",
+          card_number: rawCard
         })
       });
       const data = await response.json();
       if (response.ok) {
         setPaymentSuccess(true);
-        setTimeout(() => {
-          setPaymentSuccess(false);
-          setShowBudgetModal(false);
-        }, 3000);
       } else {
         setSettleMessage(data.detail || 'Payment failed.');
       }
@@ -317,36 +405,114 @@ export default function App() {
     return { flight, hotel, food, trans, act, total: flight + hotel + food + trans + act };
   };
 
+  const handleAmend = async (dayIdx, itemType, itemIdx) => {
+    if (!editPreference.trim()) return;
+    setAmendLoading(true);
+    const day = itinerary[dayIdx];
+    let current_item = {};
+    if (itemType === 'hotel') current_item = day.hotel || {};
+    else if (itemType === 'food') current_item = (day.food_recommendations || [])[itemIdx] || {};
+    else if (itemType === 'activity') current_item = (day.activities || [])[itemIdx] || {};
+
+    const trip_summary = {
+      destination: (itinerary[0]?.location || 'Destination').split(/[\s]*[-–(,][\s]*/)[0],
+      budget_myr: tripData?.budget_myr || 5000,
+    };
+
+    try {
+      const response = await fetch('/api/amend-item', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_type: itemType, current_item, user_preference: editPreference, trip_summary })
+      });
+      const data = await response.json();
+      if (response.ok && data.data) {
+        const newItinerary = [...itinerary];
+        const dayCopy = { ...newItinerary[dayIdx] };
+        if (itemType === 'hotel') {
+          dayCopy.hotel = { ...dayCopy.hotel, ...data.data };
+        } else if (itemType === 'food') {
+          const foods = [...(dayCopy.food_recommendations || [])];
+          if (Array.isArray(data.data)) {
+            dayCopy.food_recommendations = data.data;
+          } else {
+            foods[itemIdx] = { ...foods[itemIdx], ...data.data };
+            dayCopy.food_recommendations = foods;
+          }
+        } else if (itemType === 'activity') {
+          const acts = [...(dayCopy.activities || [])];
+          acts[itemIdx] = { ...acts[itemIdx], ...data.data };
+          dayCopy.activities = acts;
+        }
+        newItinerary[dayIdx] = dayCopy;
+        setItinerary(newItinerary);
+      }
+    } catch (e) {
+      console.error('Amend failed:', e);
+    } finally {
+      setAmendLoading(false);
+      setEditingItem(null);
+      setEditPreference('');
+    }
+  };
+
+  const downloadItineraryPDF = () => {
+    const destCity = (itinerary[0]?.location || 'Destination').split(/[\s]*[-–(,][\s]*/)[0];
+    const printWindow = window.open('', '_blank');
+    const flightInfo = flightOptions[selectedFlightIdx];
+    const days = itinerary.map(day => {
+      const acts = (day.activities || []).map(a => `<li><strong>${a.name}</strong> ${a.schedule || ''} — RM ${a.cost_myr || 0} ${a.rating ? '★ ' + a.rating : ''}</li>`).join('');
+      const foods = (day.food_recommendations || []).map(f => {
+        const n = typeof f === 'string' ? f : f.name;
+        const c = typeof f === 'object' ? f.avg_cost_myr : 0;
+        return `<li>${n} — RM ${c}</li>`;
+      }).join('');
+      return `<div style="margin-bottom:20px;page-break-inside:avoid"><h3>Day ${day.day}: ${day.location}</h3><p><strong>Hotel:</strong> ${day.hotel?.name || 'N/A'} — RM ${day.hotel?.cost_myr || 0}/night ${day.hotel?.rating ? '★ ' + day.hotel.rating : ''}</p><p><strong>Activities:</strong></p><ul>${acts}</ul><p><strong>Food:</strong></p><ul>${foods}</ul><p><strong>Weather:</strong> ${day.weather_advice || ''}</p></div>`;
+    }).join('');
+
+    printWindow.document.write(`<!DOCTYPE html><html><head><title>${destCity} Itinerary — DaddiesTrip</title><style>body{font-family:Georgia,serif;max-width:800px;margin:40px auto;color:#333}h1{color:#DE8170}h3{color:#3A332C;border-bottom:1px solid #eee;padding-bottom:4px}ul{padding-left:20px}li{margin:4px 0}</style></head><body><h1>${destCity} Itinerary</h1><p>${itinerary.length} Days • ${numPax} Travelers</p>${flightInfo ? `<p><strong>Flight:</strong> ${flightInfo.airline || ''} KUL → ${(flightInfo.return || {}).airport || ''} — RM ${flightInfo.cost_myr || 0}/pax</p>` : ''}<p><strong>Estimated Total:</strong> RM ${getGrandTotal().toLocaleString()}</p><hr>${days}<hr><p style="color:#999;font-size:12px">Generated by DaddiesTrip</p></body></html>`);
+    printWindow.document.close();
+    printWindow.print();
+  };
+
   return (
     <div className="min-h-screen bg-[#FDF9F3] text-gray-800 font-serif selection:bg-rose-200 relative overflow-hidden">
-      
+
       {/* Full Page Overlay for Generation Progress & Errors */}
       {overlayState !== 'hidden' && (
         <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="bg-white p-8 rounded-3xl shadow-2xl max-w-md w-full text-center border border-gray-100 relative">
-             {overlayState === 'error' ? (
-               <>
-                 <AlertTriangle className="text-red-500 mx-auto mb-4" size={48} />
-                 <h3 className="text-2xl font-bold font-serif text-gray-800 mb-2">Something went wrong</h3>
-                 <p className="text-red-600 font-sans mb-6">{errorMsg}</p>
-                 <button 
-                   onClick={() => setOverlayState('hidden')}
-                   className="bg-gray-100 text-gray-700 px-6 py-2 rounded-full font-sans font-medium hover:bg-gray-200 transition-colors"
-                 >
-                   Close
-                 </button>
-               </>
-             ) : (
-               <>
-                 <Loader2 className="animate-spin text-[#DE8170] mx-auto mb-4" size={48} />
-                 <h3 className="text-2xl font-bold font-serif text-gray-800 mb-2">Orchestrating your trip...</h3>
-                 <div className="w-full bg-gray-100 rounded-full h-2 mb-4 overflow-hidden">
-                    <div className="bg-[#DE8170] h-2 rounded-full transition-all duration-300" style={{width: `${progressPercent}%`}}></div>
-                 </div>
-                 <p className="text-gray-500 font-sans">{progressStatus}</p>
-               </>
-             )}
+            {overlayState === 'error' ? (
+              <>
+                <AlertTriangle className="text-red-500 mx-auto mb-4" size={48} />
+                <h3 className="text-2xl font-bold font-serif text-gray-800 mb-2">Something went wrong</h3>
+                <p className="text-red-600 font-sans mb-6">{errorMsg}</p>
+                <button
+                  onClick={() => setOverlayState('hidden')}
+                  className="bg-gray-100 text-gray-700 px-6 py-2 rounded-full font-sans font-medium hover:bg-gray-200 transition-colors"
+                >
+                  Close
+                </button>
+              </>
+            ) : (
+              <>
+                <Loader2 className="animate-spin text-[#DE8170] mx-auto mb-4" size={48} />
+                <h3 className="text-2xl font-bold font-serif text-gray-800 mb-2">Orchestrating your trip...</h3>
+                <div className="w-full bg-gray-100 rounded-full h-2 mb-4 overflow-hidden">
+                  <div className="bg-[#DE8170] h-2 rounded-full transition-all duration-300" style={{ width: `${progressPercent}%` }}></div>
+                </div>
+                <p className="text-gray-500 font-sans">{progressStatus}</p>
+              </>
+            )}
           </div>
+        </div>
+      )}
+
+      {/* Completion Toast */}
+      {showReadyToast && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[80] bg-green-500 text-white px-6 py-3 rounded-full shadow-lg font-sans font-medium flex items-center gap-2 animate-bounce">
+          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+          Your trip is ready! Switching to itinerary...
         </div>
       )}
 
@@ -411,8 +577,8 @@ export default function App() {
           <button
             onClick={() => setActiveTab('plan')}
             className={`flex items-center px-8 py-3 rounded-full transition-all font-sans font-medium ${activeTab === 'plan'
-                ? 'bg-[#DE8170] text-white shadow-md'
-                : 'text-gray-600 hover:bg-gray-50'
+              ? 'bg-[#DE8170] text-white shadow-md'
+              : 'text-gray-600 hover:bg-gray-50'
               }`}
           >
             <Plane className="mr-2" size={18} />
@@ -421,8 +587,8 @@ export default function App() {
           <button
             onClick={() => setActiveTab('itinerary')}
             className={`flex items-center px-8 py-3 rounded-full transition-all font-sans font-medium ${activeTab === 'itinerary'
-                ? 'bg-[#DE8170] text-white shadow-md'
-                : 'text-gray-600 hover:bg-gray-50'
+              ? 'bg-[#DE8170] text-white shadow-md'
+              : 'text-gray-600 hover:bg-gray-50'
               }`}
           >
             <Calendar className="mr-2" size={18} />
@@ -431,8 +597,8 @@ export default function App() {
           <button
             onClick={() => setActiveTab('expenses')}
             className={`flex items-center px-8 py-3 rounded-full transition-all font-sans font-medium ${activeTab === 'expenses'
-                ? 'bg-[#DE8170] text-white shadow-md'
-                : 'text-gray-600 hover:bg-gray-50'
+              ? 'bg-[#DE8170] text-white shadow-md'
+              : 'text-gray-600 hover:bg-gray-50'
               }`}
           >
             <Receipt className="mr-2" size={18} />
@@ -474,14 +640,14 @@ export default function App() {
                     className="w-full bg-gray-50 border border-gray-200 rounded-full px-6 py-4 pr-24 text-gray-700 focus:outline-none focus:ring-2 focus:ring-[#DE8170]/50 transition-all shadow-inner"
                   />
                   <div className="absolute right-2 flex space-x-1">
-                    <button 
+                    <button
                       onClick={handleVoiceToggle}
                       className={`p-2 rounded-full transition-colors flex items-center justify-center w-10 ${isRecording ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}`}
                       title="Voice Input"
                     >
                       {isRecording ? <MicOff size={18} /> : <Mic size={18} />}
                     </button>
-                    <button 
+                    <button
                       onClick={handleGenerate}
                       disabled={overlayState === 'loading' || !prompt}
                       className="bg-[#DE8170] text-white p-2 rounded-full hover:bg-[#d4705f] disabled:opacity-50 transition-colors flex items-center justify-center w-10"
@@ -505,7 +671,7 @@ export default function App() {
               ) : (
                 <>
                   <div className="bg-[#DE8170] text-white rounded-2xl p-8 mb-8 shadow-md">
-                    <h2 className="text-4xl font-serif font-bold mb-2">{itinerary[0]?.location || 'Destination'}</h2>
+                    <h2 className="text-4xl font-serif font-bold mb-2">{(itinerary[0]?.location || 'Destination').split(/[\s]*[-–(,][\s]*/)[0]}</h2>
                     <div className="flex items-center opacity-90">
                       <Calendar size={16} className="mr-2" />
                       <span>{itinerary.length} Days • {numPax} travelers</span>
@@ -517,59 +683,59 @@ export default function App() {
                       <h3 className="text-xl font-bold text-gray-800 mb-4 px-2">Flight Options</h3>
                       <div className="grid grid-cols-2 gap-6 mb-10">
                         {flightOptions.map((opt, i) => {
-                           const dep = opt.departure || {};
-                           const ret = opt.return || {};
-                           const airline = opt.airline || `Option ${i + 1}`;
-                           const costPerPax = opt.cost_myr || 0;
-                           const isSelected = selectedFlightIdx === i;
+                          const dep = opt.departure || {};
+                          const ret = opt.return || {};
+                          const airline = opt.airline || `Option ${i + 1}`;
+                          const costPerPax = opt.cost_myr || 0;
+                          const isSelected = selectedFlightIdx === i;
 
-                           // Build date-specific Skyscanner link
-                           let skyscannerHref = opt.source || '#';
-                           if (skyscannerHref === '#' || !skyscannerHref.includes('/kul/')) {
-                             const destIATA = (ret.airport || '').toLowerCase() || 'sin';
-                             const depD = (dep.date || '').replace(/-/g, '');
-                             const retD = (ret.date || '').replace(/-/g, '');
-                             if (depD.length >= 8 && retD.length >= 8) {
-                               skyscannerHref = `https://www.skyscanner.com.my/transport/flights/kul/${destIATA}/${depD.slice(2)}/${retD.slice(2)}/`;
-                             }
-                           }
+                          // Build date-specific Skyscanner link
+                          let skyscannerHref = opt.source || '#';
+                          if (skyscannerHref === '#' || !skyscannerHref.includes('/kul/')) {
+                            const destIATA = (ret.airport || '').toLowerCase() || 'sin';
+                            const depD = (dep.date || '').replace(/-/g, '');
+                            const retD = (ret.date || '').replace(/-/g, '');
+                            if (depD.length >= 8 && retD.length >= 8) {
+                              skyscannerHref = `https://www.skyscanner.com.my/transport/flights/kul/${destIATA}/${depD.slice(2)}/${retD.slice(2)}/`;
+                            }
+                          }
 
-                           // Build Google Flights link
-                           let googleFlightsHref = opt.google_flights || '#';
-                           if (googleFlightsHref === '#' || !googleFlightsHref.includes('on+')) {
-                             const destIATA = ret.airport || 'SIN';
-                             const airlineName = (opt.airline || '').replace(/\s+/g, '+');
-                             const depDateStr = dep.date || '';
-                             if (depDateStr) {
-                               googleFlightsHref = `https://www.google.com/travel/flights?q=Flights+from+KUL+to+${destIATA}+on+${depDateStr}${airlineName ? '+with+' + airlineName : ''}&curr=MYR&hl=en&gl=MY`;
-                             }
-                           }
+                          // Build Google Flights link
+                          let googleFlightsHref = opt.google_flights || '#';
+                          if (googleFlightsHref === '#' || !googleFlightsHref.includes('on+')) {
+                            const destIATA = ret.airport || 'SIN';
+                            const airlineName = (opt.airline || '').replace(/\s+/g, '+');
+                            const depDateStr = dep.date || '';
+                            if (depDateStr) {
+                              googleFlightsHref = `https://www.google.com/travel/flights?q=Flights+from+KUL+to+${destIATA}+on+${depDateStr}${airlineName ? '+with+' + airlineName : ''}&curr=MYR&hl=en&gl=MY`;
+                            }
+                          }
 
-                           return (
-                             <div key={i} onClick={() => setSelectedFlightIdx(i)} className={`border rounded-2xl p-6 transition-colors cursor-pointer group ${isSelected ? 'border-[#DE8170] bg-white shadow-md' : 'border-gray-200 bg-gray-50 hover:border-[#DE8170] hover:bg-white'}`}>
-                               <div className="flex justify-between items-center mb-4">
-                                 <span className="font-semibold text-gray-700">{airline}</span>
-                                 <span className={`text-xs font-bold px-3 py-1 rounded-full ${isSelected ? 'bg-[#DE8170]/10 text-[#DE8170]' : 'bg-gray-200 text-gray-700'}`}>RM {costPerPax}</span>
-                               </div>
-                               <div className="flex justify-between items-center text-sm text-gray-500 mb-4">
-                                 <div className="text-center">
-                                   <div className="text-2xl font-bold text-gray-800 mb-1">{dep.airport || 'KUL'}</div>
-                                   {dep.time || 'TBD'}
-                                 </div>
-                                 <div className="flex-1 border-t-2 border-dashed border-gray-300 mx-4 relative">
-                                   <Plane size={16} className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 transition-colors ${isSelected ? 'text-[#DE8170]' : 'text-gray-400 group-hover:text-[#DE8170]'}`} />
-                                 </div>
-                                 <div className="text-center">
-                                   <div className="text-2xl font-bold text-gray-800 mb-1">{ret.airport || 'DPS'}</div>
-                                   {ret.arrival_time || 'TBD'}
-                                 </div>
-                               </div>
-                               <div className="flex gap-2 mt-4">
-                                 <a href={skyscannerHref} target="_blank" rel="noopener" className="text-xs font-medium text-[#DE8170] hover:underline" onClick={(e) => e.stopPropagation()}>Skyscanner ↗</a>
-                                 <a href={googleFlightsHref} target="_blank" rel="noopener" className="text-xs font-medium text-[#DE8170] hover:underline" onClick={(e) => e.stopPropagation()}>Google Flights ↗</a>
-                               </div>
-                             </div>
-                           );
+                          return (
+                            <div key={i} onClick={() => setSelectedFlightIdx(i)} className={`border rounded-2xl p-6 transition-colors cursor-pointer group ${isSelected ? 'border-[#DE8170] bg-white shadow-md' : 'border-gray-200 bg-gray-50 hover:border-[#DE8170] hover:bg-white'}`}>
+                              <div className="flex justify-between items-center mb-4">
+                                <span className="font-semibold text-gray-700">{airline}</span>
+                                <span className={`text-xs font-bold px-3 py-1 rounded-full ${isSelected ? 'bg-[#DE8170]/10 text-[#DE8170]' : 'bg-gray-200 text-gray-700'}`}>RM {costPerPax}</span>
+                              </div>
+                              <div className="flex justify-between items-center text-sm text-gray-500 mb-4">
+                                <div className="text-center">
+                                  <div className="text-2xl font-bold text-gray-800 mb-1">{dep.airport || 'KUL'}</div>
+                                  {dep.time || 'TBD'}
+                                </div>
+                                <div className="flex-1 border-t-2 border-dashed border-gray-300 mx-4 relative">
+                                  <Plane size={16} className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 transition-colors ${isSelected ? 'text-[#DE8170]' : 'text-gray-400 group-hover:text-[#DE8170]'}`} />
+                                </div>
+                                <div className="text-center">
+                                  <div className="text-2xl font-bold text-gray-800 mb-1">{ret.airport || 'DPS'}</div>
+                                  {ret.arrival_time || 'TBD'}
+                                </div>
+                              </div>
+                              <div className="flex gap-2 mt-4">
+                                <a href={skyscannerHref} target="_blank" rel="noopener" className="text-xs font-medium text-[#DE8170] hover:underline" onClick={(e) => e.stopPropagation()}>Skyscanner ↗</a>
+                                <a href={googleFlightsHref} target="_blank" rel="noopener" className="text-xs font-medium text-[#DE8170] hover:underline" onClick={(e) => e.stopPropagation()}>Google Flights ↗</a>
+                              </div>
+                            </div>
+                          );
                         })}
                       </div>
                     </>
@@ -598,7 +764,35 @@ export default function App() {
                               <React.Fragment key={actIdx}>
                                 <div className="bg-gray-50 rounded-xl p-5 border border-gray-100 hover:shadow-md transition-shadow relative">
                                   <span className="absolute top-5 right-5 text-xs font-bold bg-gray-200 text-gray-700 px-2 py-1 rounded">RM {act.cost_myr || 0}</span>
-                                  <h5 className="font-bold text-gray-800 mb-2">{act.name}</h5>
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <h5 className="font-bold text-gray-800">{act.name}</h5>
+                                    <button
+                                      onClick={() => setEditingItem(editingItem?.dayIdx === dayIdx && editingItem?.itemType === 'activity' && editingItem?.itemIdx === actIdx ? null : { dayIdx, itemType: 'activity', itemIdx: actIdx })}
+                                      className="text-gray-300 hover:text-[#DE8170] transition-colors"
+                                      title="Customize this activity"
+                                    >
+                                      <Pencil size={14} />
+                                    </button>
+                                  </div>
+                                  {editingItem?.dayIdx === dayIdx && editingItem?.itemType === 'activity' && editingItem?.itemIdx === actIdx && (
+                                    <div className="flex gap-2 mb-2">
+                                      <input
+                                        type="text"
+                                        value={editPreference}
+                                        onChange={(e) => setEditPreference(e.target.value)}
+                                        placeholder="e.g. cheaper, museum, outdoor..."
+                                        className="flex-1 text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#DE8170]"
+                                        onKeyDown={(e) => e.key === 'Enter' && handleAmend(dayIdx, 'activity', actIdx)}
+                                      />
+                                      <button
+                                        onClick={() => handleAmend(dayIdx, 'activity', actIdx)}
+                                        disabled={amendLoading}
+                                        className="text-xs bg-[#DE8170] text-white px-3 py-2 rounded-lg hover:bg-[#d4705f] disabled:opacity-50"
+                                      >
+                                        {amendLoading ? '...' : 'Update'}
+                                      </button>
+                                    </div>
+                                  )}
                                   <p className="text-sm text-gray-500 mb-2">{act.schedule || 'Flexible'} • {dayLocation}</p>
                                   {act.rating && (
                                     <div className="text-xs font-medium text-yellow-600 bg-yellow-50 inline-block px-2 py-1 rounded mb-2">
@@ -629,41 +823,101 @@ export default function App() {
                             <p className="text-gray-400 italic">No specific activities planned.</p>
                           )}
                         </div>
-                        
+
                         <div className="ml-4 mt-6 flex gap-4">
                           <div className="flex-1 bg-gray-50 rounded-xl p-4 border border-gray-100">
-                             <h5 className="font-bold text-gray-800 text-sm mb-1">🏨 Stay</h5>
-                             <p className="text-sm text-gray-600">{day.hotel?.name || 'Hotel in ' + dayLocation}</p>
-                             <p className="text-xs font-semibold mt-1">RM {day.hotel?.cost_myr || 0}/night</p>
+                            <div className="flex items-center gap-2 mb-1">
+                              <h5 className="font-bold text-gray-800 text-sm">🏨 Stay</h5>
+                              <button
+                                onClick={() => setEditingItem(editingItem?.dayIdx === dayIdx && editingItem?.itemType === 'hotel' ? null : { dayIdx, itemType: 'hotel', itemIdx: 0 })}
+                                className="text-gray-300 hover:text-[#DE8170] transition-colors"
+                                title="Change hotel"
+                              >
+                                <Pencil size={12} />
+                              </button>
+                            </div>
+                            {editingItem?.dayIdx === dayIdx && editingItem?.itemType === 'hotel' && (
+                              <div className="flex gap-2 mb-2">
+                                <input
+                                  type="text"
+                                  value={editPreference}
+                                  onChange={(e) => setEditPreference(e.target.value)}
+                                  placeholder="e.g. cheaper, near station, ryokan..."
+                                  className="flex-1 text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#DE8170]"
+                                  onKeyDown={(e) => e.key === 'Enter' && handleAmend(dayIdx, 'hotel', 0)}
+                                />
+                                <button
+                                  onClick={() => handleAmend(dayIdx, 'hotel', 0)}
+                                  disabled={amendLoading}
+                                  className="text-xs bg-[#DE8170] text-white px-3 py-2 rounded-lg hover:bg-[#d4705f] disabled:opacity-50"
+                                >
+                                  {amendLoading ? '...' : 'Update'}
+                                </button>
+                              </div>
+                            )}
+                            <p className="text-sm text-gray-600">{day.hotel?.name || 'Hotel in ' + dayLocation}</p>
+                            {day.hotel?.rating && (
+                              <span className="text-xs font-medium text-yellow-600 bg-yellow-50 px-2 py-0.5 rounded inline-block mt-1">★ {day.hotel.rating}</span>
+                            )}
+                            <p className="text-xs font-semibold mt-1">RM {day.hotel?.cost_myr || 0}/night</p>
                           </div>
                           <div className="flex-1 bg-gray-50 rounded-xl p-4 border border-gray-100">
-                             <h5 className="font-bold text-gray-800 text-sm mb-2">🍽️ Eat</h5>
-                             <div className="space-y-2">
-                                {day.food_recommendations && Array.isArray(day.food_recommendations) && day.food_recommendations.length > 0 ? (
-                                  day.food_recommendations.map((f, i) => {
-                                    const name = typeof f === 'string' ? f : (f.name || 'Local Spot');
-                                    const type = typeof f === 'object' ? f.type : '';
-                                    const cost = typeof f === 'object' ? f.avg_cost_myr : 0;
-                                    const typeEmoji = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍡' };
-                                    return (
-                                      <div key={i} className="flex items-center justify-between group">
-                                        <div className="flex flex-col">
-                                          <span className="text-xs font-medium text-gray-700 line-clamp-1">{name}</span>
-                                          {type && <span className="text-[10px] text-gray-400">{typeEmoji[type.toLowerCase()] || '🍽️'} {type}</span>}
-                                        </div>
-                                        {cost > 0 && <span className="text-[10px] font-bold text-gray-500">RM {cost}</span>}
+                            <div className="flex items-center gap-2 mb-2">
+                              <h5 className="font-bold text-gray-800 text-sm">🍽️ Eat</h5>
+                              <button
+                                onClick={() => setEditingItem(editingItem?.dayIdx === dayIdx && editingItem?.itemType === 'food' ? null : { dayIdx, itemType: 'food', itemIdx: 0 })}
+                                className="text-gray-300 hover:text-[#DE8170] transition-colors"
+                                title="Change food recommendations"
+                              >
+                                <Pencil size={12} />
+                              </button>
+                            </div>
+                            {editingItem?.dayIdx === dayIdx && editingItem?.itemType === 'food' && (
+                              <div className="flex gap-2 mb-2">
+                                <input
+                                  type="text"
+                                  value={editPreference}
+                                  onChange={(e) => setEditPreference(e.target.value)}
+                                  placeholder="e.g. halal, vegetarian, local street food..."
+                                  className="flex-1 text-xs border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-[#DE8170]"
+                                  onKeyDown={(e) => e.key === 'Enter' && handleAmend(dayIdx, 'food', 0)}
+                                />
+                                <button
+                                  onClick={() => handleAmend(dayIdx, 'food', 0)}
+                                  disabled={amendLoading}
+                                  className="text-xs bg-[#DE8170] text-white px-3 py-2 rounded-lg hover:bg-[#d4705f] disabled:opacity-50"
+                                >
+                                  {amendLoading ? '...' : 'Update'}
+                                </button>
+                              </div>
+                            )}
+                            <div className="space-y-2">
+                              {day.food_recommendations && Array.isArray(day.food_recommendations) && day.food_recommendations.length > 0 ? (
+                                day.food_recommendations.map((f, i) => {
+                                  const name = typeof f === 'string' ? f : (f.name || 'Local Spot');
+                                  const type = typeof f === 'object' ? f.type : '';
+                                  const cost = typeof f === 'object' ? f.avg_cost_myr : 0;
+                                  const rating = typeof f === 'object' ? f.rating : '';
+                                  const typeEmoji = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍡' };
+                                  return (
+                                    <div key={i} className="flex items-center justify-between group">
+                                      <div className="flex flex-col">
+                                        <span className="text-xs font-medium text-gray-700 line-clamp-1">{name}</span>
+                                        <span className="text-[10px] text-gray-400">{type ? (typeEmoji[type.toLowerCase()] || '🍽️') + ' ' + type : ''}{rating ? ' • ★ ' + rating : ''}</span>
                                       </div>
-                                    );
-                                  })
-                                ) : (
-                                  <p className="text-xs text-gray-400 italic">No food spots listed.</p>
-                                )}
-                              </div>
-                              <div className="mt-3 pt-2 border-t border-gray-200/50 flex justify-between items-center">
-                                <span className="text-[10px] text-gray-400">Total Est.</span>
-                                <span className="text-xs font-bold text-[#DE8170]">RM {day.daily_food_cost_myr || 0}</span>
-                              </div>
-                           </div>
+                                      {cost > 0 && <span className="text-[10px] font-bold text-gray-500">RM {cost}</span>}
+                                    </div>
+                                  );
+                                })
+                              ) : (
+                                <p className="text-xs text-gray-400 italic">No food spots listed.</p>
+                              )}
+                            </div>
+                            <div className="mt-3 pt-2 border-t border-gray-200/50 flex justify-between items-center">
+                              <span className="text-[10px] text-gray-400">Total Est.</span>
+                              <span className="text-xs font-bold text-[#DE8170]">RM {day.daily_food_cost_myr || 0}</span>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     );
@@ -708,7 +962,7 @@ export default function App() {
                       <div className="space-y-6">
                         {itinerary.map((day, idx) => {
                           const hotelCost = (day.hotel?.cost_myr || 0) * numPax;
-                          if (hotelCost > 0 && (!idx || day.hotel?.name !== itinerary[idx-1]?.hotel?.name)) {
+                          if (hotelCost > 0 && (!idx || day.hotel?.name !== itinerary[idx - 1]?.hotel?.name)) {
                             return (
                               <div key={`h-${idx}`} className="flex justify-between items-start border-b border-gray-100 pb-4">
                                 <div>
@@ -726,35 +980,59 @@ export default function App() {
                         })}
 
                         {flightOptions[selectedFlightIdx] && (
-                           <div className="flex justify-between items-start border-b border-gray-100 pb-4">
-                             <div>
-                               <h4 className="font-bold text-gray-800">Flight Tickets ({flightOptions[selectedFlightIdx].airline})</h4>
-                               <p className="text-xs text-gray-500 mt-1">Transportation</p>
-                             </div>
-                             <div className="text-right">
-                               <div className="font-bold text-gray-800">RM {flightOptions[selectedFlightIdx].cost_myr * numPax}</div>
-                               <div className="text-xs text-gray-400">RM {flightOptions[selectedFlightIdx].cost_myr} each</div>
-                             </div>
-                           </div>
+                          <div className="flex justify-between items-start border-b border-gray-100 pb-4">
+                            <div>
+                              <h4 className="font-bold text-gray-800">Flight Tickets ({flightOptions[selectedFlightIdx].airline})</h4>
+                              <p className="text-xs text-gray-500 mt-1">Transportation</p>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-bold text-gray-800">RM {flightOptions[selectedFlightIdx].cost_myr * numPax}</div>
+                              <div className="text-xs text-gray-400">RM {flightOptions[selectedFlightIdx].cost_myr} each</div>
+                            </div>
+                          </div>
                         )}
-                        
+
                         <div className="flex justify-between items-start border-b border-gray-100 pb-4">
-                           <div>
-                             <h4 className="font-bold text-gray-800">Food & Dining</h4>
-                             <p className="text-xs text-gray-500 mt-1">Estimated total</p>
-                           </div>
-                           <div className="text-right">
-                             <div className="font-bold text-gray-800">RM {itinerary.reduce((acc, d) => acc + (d.daily_food_cost_myr || 0), 0) * numPax}</div>
-                             <div className="text-xs text-gray-400">RM {itinerary.reduce((acc, d) => acc + (d.daily_food_cost_myr || 0), 0)} each</div>
-                           </div>
+                          <div>
+                            <h4 className="font-bold text-gray-800">Food & Dining</h4>
+                            <p className="text-xs text-gray-500 mt-1">Estimated total</p>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-bold text-gray-800">RM {itinerary.reduce((acc, d) => acc + (d.daily_food_cost_myr || 0), 0) * numPax}</div>
+                            <div className="text-xs text-gray-400">RM {itinerary.reduce((acc, d) => acc + (d.daily_food_cost_myr || 0), 0)} each</div>
+                          </div>
                         </div>
+
+                        {itinerary.some(d => (d.activities || []).some(a => a.transport_to_next?.estimated_cost_myr > 0)) && (
+                          <div className="flex justify-between items-start border-b border-gray-100 pb-4">
+                            <div>
+                              <h4 className="font-bold text-gray-800">Local Transport</h4>
+                              <p className="text-xs text-gray-500 mt-1">Taxi, Metro, Bus</p>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-bold text-gray-800">
+                                RM {itinerary.reduce((acc, d) => acc + (d.activities || []).reduce((aAcc, a) => aAcc + (a.transport_to_next?.estimated_cost_myr || 0), 0), 0) * numPax}
+                              </div>
+                              <div className="text-xs text-gray-400">
+                                RM {itinerary.reduce((acc, d) => acc + (d.activities || []).reduce((aAcc, a) => aAcc + (a.transport_to_next?.estimated_cost_myr || 0), 0), 0)} each
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                       </div>
                     </div>
 
                     <div>
                       <h3 className="text-xl font-bold text-gray-800 mb-6">Settlement</h3>
-                      <button 
+                      <button
+                        onClick={downloadItineraryPDF}
+                        className="w-full bg-[#8E9F7F] text-white py-4 rounded-2xl font-bold shadow-lg hover:bg-[#7d8e6e] transition-all flex items-center justify-center gap-2 mb-4"
+                      >
+                        <Download size={20} />
+                        Download Itinerary PDF
+                      </button>
+                      <button
                         onClick={() => setShowBudgetModal(true)}
                         className="w-full bg-[#DE8170] text-white py-4 rounded-2xl font-bold shadow-lg hover:bg-[#d4705f] transition-all flex items-center justify-center gap-2"
                       >
@@ -779,7 +1057,7 @@ export default function App() {
             <button onClick={() => setShowBudgetModal(false)} className="absolute top-6 right-6 text-gray-400 hover:text-gray-600">
               <X size={24} />
             </button>
-            
+
             <div className="grid grid-cols-2 gap-12">
               {/* Breakdown Table */}
               <div>
@@ -805,7 +1083,7 @@ export default function App() {
               {/* Payment UI */}
               <div className="font-sans">
                 <h3 className="text-xl font-bold text-gray-800 mb-6">Secure Payment</h3>
-                
+
                 {/* Visual Card */}
                 <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-2xl p-6 text-white shadow-xl mb-8 relative overflow-hidden h-48 flex flex-col justify-between">
                   <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16"></div>
@@ -828,8 +1106,8 @@ export default function App() {
                 <div className="space-y-4">
                   <div>
                     <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">Card Number</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder="1234 5678 9012 3456"
                       value={cardNumber}
                       onChange={(e) => {
@@ -842,8 +1120,8 @@ export default function App() {
                   </div>
                   <div>
                     <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">Cardholder Name</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       placeholder="John Doe"
                       value={cardHolder}
                       onChange={(e) => setCardHolder(e.target.value.toUpperCase())}
@@ -853,8 +1131,8 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">Expiry</label>
-                      <input 
-                        type="text" 
+                      <input
+                        type="text"
                         placeholder="MM/YY"
                         value={cardExpiry}
                         onChange={(e) => {
@@ -867,8 +1145,8 @@ export default function App() {
                     </div>
                     <div>
                       <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1 block">CVV</label>
-                      <input 
-                        type="password" 
+                      <input
+                        type="password"
                         placeholder="•••"
                         maxLength="3"
                         value={cardCvv}
@@ -879,7 +1157,7 @@ export default function App() {
                   </div>
                 </div>
 
-                <button 
+                <button
                   onClick={handleSettle}
                   disabled={isProcessing}
                   className="w-full bg-[#DE8170] text-white py-4 rounded-xl font-bold mt-8 shadow-lg hover:bg-[#d4705f] disabled:opacity-50 transition-all"
@@ -893,17 +1171,66 @@ export default function App() {
         </div>
       )}
 
-      {/* Success Animation Overlay */}
+      {/* Amend Loading Overlay */}
+      {amendLoading && (
+        <div className="fixed inset-0 bg-white/70 backdrop-blur-sm z-[60] flex flex-col items-center justify-center">
+          <Loader2 className="animate-spin text-[#DE8170] mb-4" size={40} />
+          <h3 className="text-xl font-serif font-bold text-gray-800">Updating your preference...</h3>
+          <p className="text-gray-400 font-sans text-sm mt-1">Finding the best match for you</p>
+        </div>
+      )}
+
+      {/* Booking Animation Overlay */}
       {paymentSuccess && (
-        <div className="fixed inset-0 bg-white/95 z-[70] flex flex-col items-center justify-center animate-in fade-in duration-500">
-          <div className="success-animation">
-            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" className="success-svg">
-              <circle className="success-circle" cx="50" cy="50" r="45" fill="none" stroke="#34c759" strokeWidth="6" />
-              <path className="success-check" d="M25 50 L43 68 L75 32" fill="none" stroke="#34c759" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </div>
-          <h3 className="text-3xl font-serif font-bold text-gray-800">Payment Successful</h3>
-          <p className="text-gray-500 font-sans mt-2">Your trip has been booked!</p>
+        <div className="fixed inset-0 bg-white z-[70] flex flex-col items-center justify-center">
+          {!bookingComplete ? (
+            <div className="w-full max-w-md px-8">
+              <div className="text-center mb-10">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-[#DE8170]/10 mb-4">
+                  <Loader2 className="animate-spin text-[#DE8170]" size={32} />
+                </div>
+                <h3 className="text-2xl font-serif font-bold text-gray-800">Booking Your Trip</h3>
+                <p className="text-gray-400 font-sans text-sm mt-1">Please wait while we confirm everything...</p>
+              </div>
+              <div className="space-y-4">
+                {bookingSteps.map((step, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex items-center gap-4 p-3 rounded-xl transition-all duration-500 ${
+                      step.status === 'active' ? 'bg-[#DE8170]/5 scale-[1.02]' :
+                      step.status === 'done' ? 'bg-green-50' : 'opacity-40'
+                    }`}
+                  >
+                    <span className="text-2xl w-10 text-center">{step.icon}</span>
+                    <span className={`flex-1 font-sans text-sm font-medium ${
+                      step.status === 'active' ? 'text-[#DE8170]' :
+                      step.status === 'done' ? 'text-green-700' : 'text-gray-400'
+                    }`}>
+                      {step.label}
+                    </span>
+                    {step.status === 'active' && (
+                      <Loader2 className="animate-spin text-[#DE8170]" size={18} />
+                    )}
+                    {step.status === 'done' && (
+                      <svg className="text-green-500" width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center animate-in fade-in duration-500">
+              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-green-50 mb-6">
+                <svg className="text-green-500" width="40" height="40" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <h3 className="text-3xl font-serif font-bold text-gray-800">Trip Confirmed!</h3>
+              <p className="text-gray-400 font-sans mt-2">All bookings are set. Have a great trip!</p>
+            </div>
+          )}
         </div>
       )}
     </div>

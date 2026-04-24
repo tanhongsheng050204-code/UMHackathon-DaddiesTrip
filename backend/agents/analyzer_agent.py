@@ -29,13 +29,13 @@ If ANY are missing, return "status": "invalid" and list the missing fields.
 
 Output ONLY valid JSON in this format:
 {{
-  "status": "valid" | "invalid",
+  "status": "valid or invalid",
   "missing_fields": ["destination", "trip_dates", "participants", "budget"],
   "message": "A friendly message asking for the missing info, or empty if valid."
 }}"""
 
         try:
-            return self.query(system_prompt, f"User Request: {user_request}", max_tokens=200)
+            return self.query(system_prompt, f"User Request: {user_request}", max_tokens=300)
         except Exception as e:
             # Fallback to valid if AI fails, to allow the planner to try anyway
             print(f"Analyzer AI error: {e}")

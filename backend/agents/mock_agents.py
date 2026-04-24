@@ -91,7 +91,11 @@ class OrchestratorAgent:
                     "day": d.get("day"),
                     "location": d.get("location"),
                     "activities": [
-                        {"name": a.get("name"), "schedule": a.get("schedule")}
+                        {
+                            "name": a.get("name"),
+                            "schedule": a.get("schedule"),
+                            "transport_to_next": a.get("transport_to_next")
+                        }
                         for a in d.get("activities", [])
                     ],
                 }
@@ -114,7 +118,10 @@ class OrchestratorAgent:
                     "day": d.get("day"),
                     "hotel_cost_myr": (d.get("hotel") or {}).get("cost_myr", 0),
                     "daily_food_cost_myr": d.get("daily_food_cost_myr", 0),
-                    "transport_cost_myr": (d.get("transportation") or {}).get("cost_myr", 0),
+                    "transport_cost_myr": (d.get("transportation") or {}).get("cost_myr", 0) + sum(
+                        (a.get("transport_to_next") or {}).get("estimated_cost_myr", 0)
+                        for a in d.get("activities", [])
+                    ),
                     "activity_costs_myr": [a.get("cost_myr", 0) for a in d.get("activities", [])],
                 }
                 for d in merged_itinerary
@@ -130,7 +137,10 @@ class OrchestratorAgent:
             (d.get("hotel") or {}).get("cost_myr", 0)
             + d.get("daily_food_cost_myr", 0)
             + (d.get("transportation") or {}).get("cost_myr", 0)
-            + sum(a.get("cost_myr", 0) for a in d.get("activities", []))
+            + sum(
+                a.get("cost_myr", 0) + (a.get("transport_to_next") or {}).get("estimated_cost_myr", 0)
+                for a in d.get("activities", [])
+            )
             for d in merged_itinerary
         )
         total = round((flight_pp + day_pp) * num_participants)
@@ -270,8 +280,9 @@ class OrchestratorAgent:
         print(f"Booking: {time.time() - t2:.1f}s")
 
         if booking_error:
-            yield {"type": "error", "message": booking_error}
-            return
+            print(f"Booking Agent error (graceful fallback): {booking_error}")
+            # Don't kill the whole trip — continue with planner-only data
+            booking_result = {}
 
         # ── Stream partial flights immediately after booking ──────────────────────
         flight_options = booking_result.get("flight_options", [])
