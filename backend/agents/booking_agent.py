@@ -40,7 +40,8 @@ PER DAY — you MUST output EXACTLY {duration} days:
   Example: [{{"name":"Ichiran Ramen","avg_cost_myr":15,"type":"lunch"}},{{"name":"Sushi Dai","avg_cost_myr":25,"type":"dinner"}},{{"name":"7-Eleven Onigiri","avg_cost_myr":5,"type":"breakfast"}}]
 - "daily_food_cost_myr": <sum of all food avg_cost_myr, NEVER 0>
 
-Keep responses SHORT. Realistic costs for KUL→{dest}."""
+43. BUDGET CONSTRAINT: The total group budget is RM {trip_summary.get('budget_myr', 5000)}. Select hotels and flights so the TOTAL group cost (all travellers) stays close to or under this limit. Prefer cost-effective options if the budget is tight.
+44. Keep responses SHORT. Realistic costs for KUL→{dest}."""
 
         user_prompt = f"Trip: {trip_summary}\nItinerary to book: {compressed_draft}"
         return self.query(system_prompt, user_prompt, max_tokens=6000)

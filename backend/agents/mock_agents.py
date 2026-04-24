@@ -206,7 +206,7 @@ class OrchestratorAgent:
         except Exception as e:
             yield {"type": "error", "message": f"Analyzer failed: {e}"}
             return
-        print(f"⏱️ Analyzer: {time.time() - t0:.1f}s")
+        print(f"Analyzer: {time.time() - t0:.1f}s")
 
         if analyze_res.get("status") == "invalid":
             yield {
@@ -227,7 +227,7 @@ class OrchestratorAgent:
         except Exception as e:
             yield {"type": "error", "message": f"Planner failed: {e}"}
             return
-        print(f"⏱️ Planner: {time.time() - t1:.1f}s")
+        print(f"Planner: {time.time() - t1:.1f}s")
 
         # Participants
         participants_raw = itinerary_draft.get("participants", [])
@@ -267,7 +267,7 @@ class OrchestratorAgent:
         except Exception as e:
             booking_error = f"Booking failed: {e}"
             print(f"Booking Agent error: {e}")
-        print(f"⏱️ Booking: {time.time() - t2:.1f}s")
+        print(f"Booking: {time.time() - t2:.1f}s")
 
         if booking_error:
             yield {"type": "error", "message": booking_error}

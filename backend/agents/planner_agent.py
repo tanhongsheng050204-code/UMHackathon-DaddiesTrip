@@ -15,8 +15,9 @@ CRITICAL RULES:
 3. Activities: "name", "schedule" (e.g. 09:00-11:30), "cost_myr".
 4. Transport: "transport_to_next": {{"mode":"walk|bus|metro|taxi", "duration":"X min", "estimated_cost_myr":0, "notes":"..."}}. For metro/train: include the specific line name in notes (e.g. "JR Yamanote Line", "Tokyo Metro Ginza Line"). Null for last activity of day.
 5. Include "participants" (array), "food_recommendations" (array per day), "weather_advice" (string).
-6. All dates MUST be in {current_year} or later. Use the travel dates the user specified.
-7. Output ONLY valid JSON. Keep each day concise (3-4 activities max).
+13. STRICT BUDGET ADHERENCE: If the user provides a budget (e.g. RM 5000), you MUST select hotels and activities whose combined costs (for all participants) stay within that limit. Prefer mid-range or budget options if the total is tight.
+14. All dates MUST be in {current_year} or later. Use the travel dates the user specified.
+15. Output ONLY valid JSON. Keep each day concise (3-4 activities max).
 
 JSON structure:
 {{
