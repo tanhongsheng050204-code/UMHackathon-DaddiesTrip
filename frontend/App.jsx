@@ -591,20 +591,39 @@ export default function App() {
                         <div className="ml-4 space-y-6">
                           {dayActivities.length > 0 ? dayActivities.map((act, actIdx) => {
                             const embedMap = `https://maps.google.com/maps?q=${encodeURIComponent((act.name || 'location') + ' ' + dayLocation)}&t=&z=14&ie=UTF8&iwloc=&output=embed`;
+                            const tn = act.transport_to_next;
+                            const modeIcon = { walk: '🚶', bus: '🚌', metro: '🚇', taxi: '🚕', ferry: '⛴️', tram: '🚊', train: '🚆' };
+
                             return (
-                              <div key={actIdx} className="bg-gray-50 rounded-xl p-5 border border-gray-100 hover:shadow-md transition-shadow relative">
-                                <span className="absolute top-5 right-5 text-xs font-bold bg-gray-200 text-gray-700 px-2 py-1 rounded">RM {act.cost_myr || 0}</span>
-                                <h5 className="font-bold text-gray-800 mb-2">{act.name}</h5>
-                                <p className="text-sm text-gray-500 mb-2">{act.schedule || 'Flexible'} • {dayLocation}</p>
-                                {act.rating && (
-                                  <div className="text-xs font-medium text-yellow-600 bg-yellow-50 inline-block px-2 py-1 rounded mb-2">
-                                    ★ {act.rating}
+                              <React.Fragment key={actIdx}>
+                                <div className="bg-gray-50 rounded-xl p-5 border border-gray-100 hover:shadow-md transition-shadow relative">
+                                  <span className="absolute top-5 right-5 text-xs font-bold bg-gray-200 text-gray-700 px-2 py-1 rounded">RM {act.cost_myr || 0}</span>
+                                  <h5 className="font-bold text-gray-800 mb-2">{act.name}</h5>
+                                  <p className="text-sm text-gray-500 mb-2">{act.schedule || 'Flexible'} • {dayLocation}</p>
+                                  {act.rating && (
+                                    <div className="text-xs font-medium text-yellow-600 bg-yellow-50 inline-block px-2 py-1 rounded mb-2">
+                                      ★ {act.rating}
+                                    </div>
+                                  )}
+                                  <div className="rounded-lg overflow-hidden border border-gray-200 h-24 w-full max-w-sm">
+                                    <iframe src={embedMap} width="100%" height="100%" style={{ border: 0 }} allowFullScreen="" loading="lazy"></iframe>
+                                  </div>
+                                </div>
+                                {tn && actIdx < dayActivities.length - 1 && (
+                                  <div className="flex items-center gap-4 py-2 ml-6 border-l-2 border-dashed border-gray-200">
+                                    <div className="bg-white p-2 rounded-full shadow-sm border border-gray-100 -ml-[21px] z-10">
+                                      <span className="text-lg">{modeIcon[tn.mode?.toLowerCase()] || '➡️'}</span>
+                                    </div>
+                                    <div className="flex flex-col">
+                                      <span className="text-xs font-bold text-gray-600">{tn.duration || '5-10 min'} by {tn.mode || 'transit'}</span>
+                                      {tn.notes && <span className="text-[10px] text-gray-400 leading-tight">{tn.notes}</span>}
+                                    </div>
+                                    {tn.estimated_cost_myr > 0 && (
+                                      <span className="ml-auto text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded">RM {tn.estimated_cost_myr}</span>
+                                    )}
                                   </div>
                                 )}
-                                <div className="rounded-lg overflow-hidden border border-gray-200 h-24 w-full max-w-sm">
-                                  <iframe src={embedMap} width="100%" height="100%" style={{ border: 0 }} allowFullScreen="" loading="lazy"></iframe>
-                                </div>
-                              </div>
+                              </React.Fragment>
                             );
                           }) : (
                             <p className="text-gray-400 italic">No specific activities planned.</p>
@@ -618,9 +637,33 @@ export default function App() {
                              <p className="text-xs font-semibold mt-1">RM {day.hotel?.cost_myr || 0}/night</p>
                           </div>
                           <div className="flex-1 bg-gray-50 rounded-xl p-4 border border-gray-100">
-                             <h5 className="font-bold text-gray-800 text-sm mb-1">🍽️ Eat</h5>
-                             <p className="text-sm text-gray-600">~ RM {day.daily_food_cost_myr || 0}/pax</p>
-                          </div>
+                             <h5 className="font-bold text-gray-800 text-sm mb-2">🍽️ Eat</h5>
+                             <div className="space-y-2">
+                                {day.food_recommendations && Array.isArray(day.food_recommendations) && day.food_recommendations.length > 0 ? (
+                                  day.food_recommendations.map((f, i) => {
+                                    const name = typeof f === 'string' ? f : (f.name || 'Local Spot');
+                                    const type = typeof f === 'object' ? f.type : '';
+                                    const cost = typeof f === 'object' ? f.avg_cost_myr : 0;
+                                    const typeEmoji = { breakfast: '🌅', lunch: '☀️', dinner: '🌙', snack: '🍡' };
+                                    return (
+                                      <div key={i} className="flex items-center justify-between group">
+                                        <div className="flex flex-col">
+                                          <span className="text-xs font-medium text-gray-700 line-clamp-1">{name}</span>
+                                          {type && <span className="text-[10px] text-gray-400">{typeEmoji[type.toLowerCase()] || '🍽️'} {type}</span>}
+                                        </div>
+                                        {cost > 0 && <span className="text-[10px] font-bold text-gray-500">RM {cost}</span>}
+                                      </div>
+                                    );
+                                  })
+                                ) : (
+                                  <p className="text-xs text-gray-400 italic">No food spots listed.</p>
+                                )}
+                              </div>
+                              <div className="mt-3 pt-2 border-t border-gray-200/50 flex justify-between items-center">
+                                <span className="text-[10px] text-gray-400">Total Est.</span>
+                                <span className="text-xs font-bold text-[#DE8170]">RM {day.daily_food_cost_myr || 0}</span>
+                              </div>
+                           </div>
                         </div>
                       </div>
                     );
@@ -853,9 +896,10 @@ export default function App() {
       {/* Success Animation Overlay */}
       {paymentSuccess && (
         <div className="fixed inset-0 bg-white/95 z-[70] flex flex-col items-center justify-center animate-in fade-in duration-500">
-          <div className="w-24 h-24 rounded-full border-4 border-green-500 flex items-center justify-center mb-6">
-            <svg className="w-12 h-12 text-green-500 animate-in zoom-in duration-500 delay-200 fill-none stroke-current stroke-[4]" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          <div className="success-animation">
+            <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" className="success-svg">
+              <circle className="success-circle" cx="50" cy="50" r="45" fill="none" stroke="#34c759" strokeWidth="6" />
+              <path className="success-check" d="M25 50 L43 68 L75 32" fill="none" stroke="#34c759" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
           <h3 className="text-3xl font-serif font-bold text-gray-800">Payment Successful</h3>
