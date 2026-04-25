@@ -81,7 +81,7 @@ export default function App() {
         osc.start(ctx.currentTime + i * 0.15);
         osc.stop(ctx.currentTime + i * 0.15 + 0.5);
       });
-    } catch (_) {}
+    } catch (_) { }
   };
 
   useEffect(() => {
@@ -220,6 +220,7 @@ export default function App() {
 
   const handleGenerate = async () => {
     if (!prompt) return;
+    console.log("Starting generation with prompt:", prompt);
     setOverlayState('loading');
     setErrorMsg('');
     setClarificationMsg('');
@@ -251,6 +252,7 @@ export default function App() {
         } else {
           try { const errData = await response.json(); errDetail = errData.detail || errDetail; } catch (_) { }
         }
+        console.error("Fetch response error:", response.status, errDetail);
         throw new Error(errDetail);
       }
 
@@ -271,10 +273,12 @@ export default function App() {
             const dataStr = line.substring(6);
             try {
               const event = JSON.parse(dataStr);
+              console.log("SSE Event Received:", event.type, event);
               if (event.type === 'progress') {
                 setProgressStatus(event.text);
                 setProgressPercent(p => Math.min(p + 15, 95));
               } else if (event.type === 'error') {
+                console.error("SSE Error Event:", event.message);
                 throw new Error(event.message);
               } else if (event.type === 'clarification') {
                 setClarificationMsg(event.message);
@@ -298,11 +302,14 @@ export default function App() {
                 setProgressPercent(100);
                 setProgressStatus('Done!');
                 success = true;
+                console.log("Generation complete! Trip data:", data);
               }
             } catch (e) {
               if (e.message !== "Unexpected end of JSON input" && !e.message.includes("JSON")) {
+                console.error("Error processing SSE event:", e);
                 throw e; // Rethrow actual errors thrown via throw new Error(event.message)
               }
+              // Not a real error, just a partial JSON chunk
             }
           }
         }
@@ -310,10 +317,12 @@ export default function App() {
       }
 
       if (!success && !isClarification) {
-        throw new Error('Server stopped responding. Try a simpler prompt.');
+        console.error("Stream finished but success flag was not set. Possible server timeout.");
+        throw new Error('The server exceeded the time limit and stopped responding. Please try again');
       }
 
     } catch (error) {
+      console.error("handleGenerate failed with error:", error);
       const msg = error.name === 'TypeError' && error.message.includes('Failed to fetch')
         ? 'Unable to connect to the server. Please check your internet connection and try again.'
         : error.message;
@@ -516,7 +525,7 @@ export default function App() {
       {/* Completion Toast */}
       {showReadyToast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[80] bg-green-500 text-white px-6 py-3 rounded-full shadow-lg font-sans font-medium flex items-center gap-2 animate-bounce">
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
           Your trip is ready! Switching to itinerary...
         </div>
       )}
@@ -1226,16 +1235,14 @@ export default function App() {
                 {bookingSteps.map((step, idx) => (
                   <div
                     key={idx}
-                    className={`flex items-center gap-4 p-3 rounded-xl transition-all duration-500 ${
-                      step.status === 'active' ? 'bg-[#DE8170]/5 scale-[1.02]' :
-                      step.status === 'done' ? 'bg-green-50' : 'opacity-40'
-                    }`}
+                    className={`flex items-center gap-4 p-3 rounded-xl transition-all duration-500 ${step.status === 'active' ? 'bg-[#DE8170]/5 scale-[1.02]' :
+                        step.status === 'done' ? 'bg-green-50' : 'opacity-40'
+                      }`}
                   >
                     <span className="text-2xl w-10 text-center">{step.icon}</span>
-                    <span className={`flex-1 font-sans text-sm font-medium ${
-                      step.status === 'active' ? 'text-[#DE8170]' :
-                      step.status === 'done' ? 'text-green-700' : 'text-gray-400'
-                    }`}>
+                    <span className={`flex-1 font-sans text-sm font-medium ${step.status === 'active' ? 'text-[#DE8170]' :
+                        step.status === 'done' ? 'text-green-700' : 'text-gray-400'
+                      }`}>
                       {step.label}
                     </span>
                     {step.status === 'active' && (

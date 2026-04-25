@@ -1,176 +1,173 @@
-<p align="center">
-  <img src="frontend/logo.jpeg" alt="DaddiesTrip Logo" width="150" style="border-radius:20px;">
-</p>
+<div align="center">
+  <img src="frontend/logo.jpeg" alt="DaddiesTrip Logo" width="150" style="border-radius: 20px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-bottom: 20px;">
 
-<h1 align="center">DaddiesTrip</h1>
+  <h1>DaddiesTrip ✈️</h1>
+  
+  <p><strong>An AI-Enabled Cross-Border Travel Orchestration & Group Accounting Platform</strong></p>
 
-<p align="center">
-  <strong>An AI-Enabled Cross-Border Travel Orchestration & Group Accounting Platform</strong>
-</p>
+  [![Vite](https://img.shields.io/badge/Vite-B73BFE?style=for-the-badge&logo=vite&logoColor=FFD62E)](https://vitejs.dev/)
+  [![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
+  [![FastAPI](https://img.shields.io/badge/fastapi-109989?style=for-the-badge&logo=FASTAPI&logoColor=white)](https://fastapi.tiangolo.com/)
+  [![Python](https://img.shields.io/badge/Python-FFD43B?style=for-the-badge&logo=python&logoColor=blue)](https://www.python.org/)
+  [![Vercel](https://img.shields.io/badge/Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://vercel.com/)
+</div>
 
-## 📌 Overview
+<br />
 
-**DaddiesTrip** is an AI-enabled cross-border travel orchestration and multi-currency group accounting application. Planning group travel and managing shared expenses across different currencies is a highly fragmented, stressful process. Users typically switch between multiple apps for itineraries, flight bookings, and manual spreadsheets for conversions.
-
-**Our Mission**: DaddiesTrip automates the entire lifecycle of group travel—from conversational itinerary generation to precise multi-currency expense splitting. We aim to facilitate frictionless, secure digital planning to ensure absolute financial accuracy and beautiful trip organization.
-
----
-
-## 🚀 Key Features
-
-- **Conversational Planning & Validation**
-  Turn unstructured travel ideas into structured itineraries using advanced AI inference. If a prompt is missing key information (destination, dates, participants, budget), the system safely halts and asks the user for clarification.
-- **Real-time Streaming**
-  Results are streamed progressively via Server-Sent Events (SSE). The AI uses token-level streaming to prevent gateway timeouts, and partial itinerary/flight data is pushed to the frontend as soon as it's ready.
-- **Flight & Hotel Orchestration**
-  Provides accurate data routing with flight options linked directly to Skyscanner and Google Flights. Smart routing detects local vs. international travel and bypasses unnecessary flight steps.
-- **Enhanced POI (Point of Interest) Enrichment**
-  Aggregates real Google Reviews, star ratings, and accurate real-world cost metrics for both daily activities and food recommendations.
-- **Smart Multi-Currency Ledger**
-  Splits costs equally using live currency conversions powered by the open, keyless Fawaz Ahmed Exchange API (`@fawazahmed0/currency-api`). Falls back to static rates if the CDN is unavailable.
-- **Interactive Map Integration**
-  Every generated activity is dynamically embedded as a Google Maps iframe showing the exact location.
-- **Secure Settlement UI**
-  A card payment modal allows group members to settle their share. Invalid cards (e.g., starting with `0000`) are rejected with a clear error.
+## 📖 Table of Contents
+- [Project Overview](#-project-overview)
+- [Key Features](#-key-features)
+- [System Architecture](#-system-architecture)
+- [Local Development Setup](#-local-development-setup)
+- [Deployment (Vercel)](#-deployment-vercel)
+- [API Documentation](#-api-documentation)
+- [Testing & QA](#-testing--qa)
 
 ---
 
-## 🧠 Multi-Agent Architecture
+## 📌 Project Overview
 
-DaddiesTrip uses a modular **4-Agent Workflow** executed sequentially. Each agent is strictly scoped to a single domain to reduce hallucination and improve speed.
+**DaddiesTrip** addresses the highly fragmented process of group travel planning and multi-currency expense management. Typically, users switch between multiple apps for itinerary drafting, flight bookings, map routing, and manual spreadsheet calculations for cost splitting.
 
-### 1. Analyzer Agent *(Pure Python — zero LLM cost)*
-- **Role:** Input validation gatekeeper.
-- **How it works:** Uses regex and keyword matching to verify 4 required fields: Destination, Trip Dates, Participants, and Budget. If any are missing, returns a structured `clarification` event with the specific missing fields so the frontend can show a targeted prompt.
-
-### 2. Planner Agent *(LLM — streamed)*
-- **Role:** Chronological itinerary drafter.
-- **How it works:** Given the validated prompt, generates a day-by-day itinerary with activities, food recommendations, transport between POIs, and a `requires_flight` flag. Output is streamed token-by-token to prevent API gateway timeouts.
-
-### 3. Booking Agent *(LLM — streamed)*
-- **Role:** Real-world booking and cost enrichment concierge.
-- **How it works:** Receives a compressed version of the planner output and enriches each day with hotel names/costs, flight options (3 airlines with Skyscanner/Google Flights deep-links), food costs, and destination review metadata. Token streaming keeps the connection alive during generation.
-
-### 4. Edge Agent *(Pure Python — zero LLM cost)*
-- **Role:** Quality assurance and data integrity.
-- **How it works:** Runs deterministic Python heuristic checks on the final merged JSON before it's emitted:
-  - Detects and nullifies hallucinated uniform activity costs (e.g., every activity priced at exactly RM25).
-  - Flags round-trip flights with identical departure and return airports.
-  - Ensures every itinerary day has required fields (`day`, `location`).
-
-> **Note:** The Budget Agent and Translation Agent have been removed. Budget calculation is now handled entirely in Python inside the Orchestrator (`_calculate_budget`), eliminating an LLM call and making cost computation instant and deterministic.
+**Our Mission:** Automate the entire lifecycle of group travel through a unified, conversational interface. From initial natural language prompts to structured itineraries, real-world flight options, and precise multi-currency expense splitting, DaddiesTrip provides a frictionless and secure digital planning experience.
 
 ---
 
-## 🚀 Quick Start (Local Development)
+## ✨ Key Features
+
+- **Conversational Planning & Validation:** Transforms unstructured text into strict JSON itineraries using advanced LLM inference. If critical parameters (destination, dates, participants, budget) are missing, the pipeline halts safely and requests user clarification.
+- **Real-Time Token Streaming (SSE):** Utilizes Server-Sent Events to stream data progressively. This prevents API gateway timeouts and delivers an ultra-responsive UI experience.
+- **Flight & Hotel Orchestration:** Intelligently routes flight options using real-world airline data. Bypasses flight generation for localized travel dynamically.
+- **POI Enrichment:** Aggregates real-world cost metrics, Google Reviews, and star ratings for activities, dining, and accommodations.
+- **Smart Multi-Currency Ledger:** Calculates exact cost divisions across groups using live exchange rates via the open `@fawazahmed0/currency-api`, with deterministic offline fallbacks.
+- **Interactive Geolocation:** Dynamically embeds Google Maps iframes for every generated activity point.
+- **Responsive UI/UX:** Built with Tailwind CSS, the application is fully responsive, ensuring flawless operation across mobile, tablet, and desktop viewports.
+
+---
+
+## 🧠 System Architecture
+
+DaddiesTrip utilizes a highly modular **4-Agent Pipeline**, strictly decoupling tasks to eliminate LLM hallucinations and optimize processing speed.
+
+```mermaid
+graph TD
+    A[Client Prompt] --> B[Analyzer Agent]
+    B -- "Missing Info" --> A
+    B -- "Valid Prompt" --> C[Planner Agent]
+    C -- "Draft Itinerary" --> D[Booking Agent]
+    D -- "Enriched POIs & Flights" --> E[Edge Agent]
+    E -- "Validated Data" --> F[Orchestrator]
+    F -- "SSE Stream" --> G[Frontend UI]
+```
+
+1. **Analyzer Agent *(Python Heuristics)*:** Validates the prompt using regex and keyword extraction. Ensures strict adherence to required fields before incurring any LLM costs.
+2. **Planner Agent *(LLM Stream)*:** Drafts the chronological day-by-day itinerary, including transport vectors and activity logic.
+3. **Booking Agent *(LLM Stream)*:** Injects real-world metadata (hotels, flights, precise POI costs, and star ratings) into the planner's draft.
+4. **Edge Agent *(Python Heuristics)*:** A deterministic QA layer that nullifies AI hallucinations (e.g., repeating identical costs, invalid flight routes) before final payload emission.
+
+---
+
+## 🛠 Local Development Setup
 
 ### Prerequisites
-Before you begin, make sure you have the following installed:
-- **Python 3.10+** — [Download](https://www.python.org/downloads/)
-- **Node.js 18+** and **npm** — [Download](https://nodejs.org/)
-- A valid **Ilmu API key** for the LLM backend
+- **Python 3.10+**
+- **Node.js 18+** & npm
+- Valid **Ilmu AI API Key** (or compatible OpenAI-format API key)
 
----
-
-### Step 1 — Clone the Repository
+### 1. Clone the Repository
 ```bash
 git clone https://github.com/your-username/UMHackathon-DaddiesTrip.git
 cd UMHackathon-DaddiesTrip
 ```
 
-### Step 2 — Configure Environment Variables
-Create a `.env` file in the **root directory** of the project:
-```bash
-# Windows (PowerShell)
-New-Item .env
-
-# macOS / Linux
-touch .env
-```
-
-Then open `.env` and add your credentials:
+### 2. Environment Configuration
+Create a `.env` file in the **root directory**:
 ```env
 Z_AI_API_KEY=your_api_key_here
 Z_AI_BASE_URL=https://api.ilmu.ai/v1/chat/completions
 Z_AI_MODEL=glm-4
 ```
+*(Note: The server auto-normalizes the base URL if the full completions endpoint is provided).*
 
-> The `Z_AI_BASE_URL` accepts either the base URL (`https://api.ilmu.ai/v1`) or the full completions endpoint — the server normalizes it automatically.
-
-### Step 3 — Install Python Dependencies
-Run this from the **root directory**:
+### 3. Backend Setup (FastAPI)
+Install dependencies and run the server (Terminal 1):
 ```bash
 python -m pip install -r requirements.txt
-```
-
-### Step 4 — Start the Backend (FastAPI)
-Run this from the **root directory** in **Terminal 1**:
-```bash
 python -m uvicorn backend.main:app --reload
 ```
-The backend API will be live at **`http://localhost:8000`**.  
-You can verify it works by visiting `http://localhost:8000/api/health` — it should return `{"status": "ok"}`.
+The API will run at `http://localhost:8000`. Verify via the health check: `http://localhost:8000/api/health`.
 
-### Step 5 — Start the Frontend (Vite + React)
-Open a **new terminal (Terminal 2)**, then run:
+### 4. Frontend Setup (React/Vite)
+Install node modules and start the dev server (Terminal 2):
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-The frontend dev server will start at **`http://localhost:5173`**.
-
-### Step 6 — Open the App
-Open your browser and go to:
-```
-http://localhost:5173
-```
-The Vite dev server automatically proxies all `/api/` requests to the FastAPI backend at port `8000`, so both work seamlessly together.
+The Vite dev server will start at `http://localhost:5173`. API requests are automatically proxied to the backend.
 
 ---
 
-### 🔧 Troubleshooting
+## ☁️ Deployment (Vercel)
 
-| Problem | Fix |
-|---|---|
-| `ModuleNotFoundError: No module named 'backend'` | Make sure you run `uvicorn` from the **root directory**, not inside `backend/` |
-| `401 Unauthorized` from the API | Your `Z_AI_API_KEY` in `.env` may be invalid or expired — get a new one from the Ilmu dashboard |
-| Frontend shows "Unable to connect to the server" | Ensure the backend is running on port `8000` before starting the frontend |
-| `npm install` fails | Make sure you are inside the `frontend/` directory when running the command |
+DaddiesTrip is configured for seamless deployment on Vercel utilizing Serverless Functions for the Python backend.
+
+1. Connect your GitHub repository to Vercel.
+2. Set the **Framework Preset** to `Vite`.
+3. Set the **Root Directory** to `./` (the repository root).
+4. Add your `.env` variables (`Z_AI_API_KEY`, etc.) in the Vercel Dashboard.
+5. Deploy.
+
+### ⚠️ Important Vercel Configuration Note (`vercel.json`)
+Due to the intensive nature of LLM generation, the application uses a custom `vercel.json` to extend the serverless execution timeout:
+```json
+{
+  "functions": {
+    "api/**/*": {
+      "maxDuration": 60
+    }
+  }
+}
+```
+*Note: Vercel's Hobby (Free) tier has a hard limit of `60s`. If you are on a Pro plan, you may increase this to `120` or `300` to support significantly larger prompts.*
 
 ---
 
-## 📡 API Endpoints
+## 📡 API Documentation
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/plan-trip-stream` | Streams the full trip planning pipeline as SSE events |
-| `POST` | `/api/settle` | Simulates a card payment settlement for the group ledger |
-| `GET`  | `/api/health` | Health check — returns `{"status": "ok"}` |
+| `POST` | `/api/plan-trip-stream` | Primary pipeline trigger. Streams data via Server-Sent Events (SSE). |
+| `POST` | `/api/settle` | Simulates secure group ledger card payment settlement. |
+| `GET`  | `/api/health` | Service health check. |
 
-### SSE Event Types (`/api/plan-trip-stream`)
-
-| Event Type | Payload | When |
-|------------|---------|------|
-| `progress` | `{ text }` | Each pipeline stage starts |
-| `clarification` | `{ message, missing_fields }` | Prompt is missing required info |
-| `partial_itinerary` | `{ days, num_participants }` | Planner output ready |
-| `partial_flights` | `{ flight_options, num_participants }` | Booking output ready |
-| `complete` | Full trip data object | All agents finished |
-| `error` | `{ message }` | Any pipeline failure |
+### SSE Stream Payload States (`/api/plan-trip-stream`)
+| Event Type | Payload Data | Trigger Condition |
+|------------|--------------|-------------------|
+| `progress` | `{ text }` | Emitted when a new pipeline stage begins. |
+| `clarification` | `{ message, missing_fields }` | Emitted if the Analyzer Agent detects missing prompt context. |
+| `partial_itinerary`| `{ days, num_participants }` | Emitted when the Planner Agent completes drafting. |
+| `partial_flights` | `{ flight_options, num_participants }` | Emitted when the Booking Agent resolves transport. |
+| `complete` | `{ data: FullTripObject }` | Final payload emission upon Edge Agent validation. |
+| `error` | `{ message }` | Fatal pipeline failure. |
 
 ---
 
 ## ⚙️ Testing & QA
 
-The application ships with a PyTest suite covering key acceptance criteria.
+DaddiesTrip includes a comprehensive PyTest suite covering agent validation, streaming schema integrity, and ledger operations.
 
-Run from the root directory:
+Execute tests from the root directory:
 ```bash
-pytest backend/tests/test_agents.py
+python -m pytest backend/tests/test_agents.py
 ```
 
-**Test Coverage:**
-- **TC-01:** Verifies the full streaming pipeline returns a correct payload schema including itinerary, flights, budget, and split data.
-- **TC-02:** Verifies that invalid payment cards (starting with `0000`) are correctly rejected by the ledger service.
-- **AI-01:** Verifies that oversized prompts (>1500 words) are safely truncated before being passed to the LLM pipeline.
+**Key Test Coverage:**
+- `TC-01`: Validates end-to-end SSE pipeline schema generation (Itinerary, Flights, Budget, Split).
+- `TC-02`: Validates deterministic ledger rejections for invalid payment methods.
+- `AI-01`: Ensures buffer overflow protection against massive user prompts.
+
+---
+<div align="center">
+  <i>Engineered with ❤️ by UTM's students</i>
+</div>
