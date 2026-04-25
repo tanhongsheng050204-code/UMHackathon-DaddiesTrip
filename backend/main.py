@@ -1,6 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 import json
+import asyncio
+import threading
+import queue
 from pydantic import BaseModel
 from backend.agents.mock_agents import OrchestratorAgent
 from backend.agents.booking_agent import BookingAgent
@@ -33,20 +36,47 @@ booking_agent = BookingAgent()
 
 @app.post("/api/plan-trip-stream")
 async def plan_trip_stream(request: TripRequest):
-    def event_stream():
-        try:
-            for event in orchestrator.process_prompt_stream(request.prompt):
-                # The orchestrator already computes split inside process_prompt_stream.
-                # No additional calculation needed here.
-                yield f"data: {json.dumps(event)}\n\n"
-        except AgentAPIError as e:
-            print(f"Orchestration API error: {e.detail or e.user_message}")
-            yield f"data: {json.dumps({'type': 'error', 'message': e.user_message})}\n\n"
-        except Exception as e:
-            print(f"Orchestration error: {type(e).__name__}: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'message': f'An unexpected error occurred: {type(e).__name__}. Please try again.'})}\n\n"
-            
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    async def event_stream():
+        q = queue.Queue()
+
+        def run_orchestrator():
+            try:
+                for event in orchestrator.process_prompt_stream(request.prompt):
+                    q.put(event)
+            except AgentAPIError as e:
+                print(f"Orchestration API error: {e.detail or e.user_message}")
+                q.put({'type': 'error', 'message': e.user_message})
+            except Exception as e:
+                print(f"Orchestration error: {type(e).__name__}: {e}")
+                q.put({'type': 'error', 'message': f'An unexpected error occurred: {type(e).__name__}. Please try again.'})
+            finally:
+                q.put(None)  # sentinel
+
+        thread = threading.Thread(target=run_orchestrator, daemon=True)
+        thread.start()
+
+        while True:
+            try:
+                item = q.get(timeout=15)
+            except queue.Empty:
+                # Heartbeat: SSE comment keeps the HTTP/2 stream alive
+                yield ": heartbeat\n\n"
+                continue
+
+            if item is None:
+                break
+            yield f"data: {json.dumps(item)}\n\n"
+            await asyncio.sleep(0)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @app.post("/api/settle")
 async def settle_balance(request: SettlementRequest):
@@ -87,4 +117,5 @@ async def health_check():
 # Mount the static frontend files
 import os
 frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
-app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+if os.path.isdir(frontend_path):
+    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")

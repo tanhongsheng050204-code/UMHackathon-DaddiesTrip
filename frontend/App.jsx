@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plane, Calendar, Receipt, Send, ChevronRight, Mic, MicOff, AlertCircle, Loader2, X, AlertTriangle, ClipboardList, Download, Pencil } from 'lucide-react';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('plan');
 
@@ -81,7 +83,7 @@ export default function App() {
         osc.start(ctx.currentTime + i * 0.15);
         osc.stop(ctx.currentTime + i * 0.15 + 0.5);
       });
-    } catch (_) {}
+    } catch (_) { }
   };
 
   useEffect(() => {
@@ -220,6 +222,7 @@ export default function App() {
 
   const handleGenerate = async () => {
     if (!prompt) return;
+    console.log("Starting generation with prompt:", prompt);
     setOverlayState('loading');
     setErrorMsg('');
     setClarificationMsg('');
@@ -234,7 +237,7 @@ export default function App() {
     let isClarification = false;
 
     try {
-      const response = await fetch('/api/plan-trip-stream', {
+      const response = await fetch(`${API_BASE}/api/plan-trip-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt })
@@ -251,6 +254,7 @@ export default function App() {
         } else {
           try { const errData = await response.json(); errDetail = errData.detail || errDetail; } catch (_) { }
         }
+        console.error("Fetch response error:", response.status, errDetail);
         throw new Error(errDetail);
       }
 
@@ -271,10 +275,12 @@ export default function App() {
             const dataStr = line.substring(6);
             try {
               const event = JSON.parse(dataStr);
+              console.log("SSE Event Received:", event.type, event);
               if (event.type === 'progress') {
                 setProgressStatus(event.text);
                 setProgressPercent(p => Math.min(p + 15, 95));
               } else if (event.type === 'error') {
+                console.error("SSE Error Event:", event.message);
                 throw new Error(event.message);
               } else if (event.type === 'clarification') {
                 setClarificationMsg(event.message);
@@ -298,11 +304,14 @@ export default function App() {
                 setProgressPercent(100);
                 setProgressStatus('Done!');
                 success = true;
+                console.log("Generation complete! Trip data:", data);
               }
             } catch (e) {
               if (e.message !== "Unexpected end of JSON input" && !e.message.includes("JSON")) {
+                console.error("Error processing SSE event:", e);
                 throw e; // Rethrow actual errors thrown via throw new Error(event.message)
               }
+              // Not a real error, just a partial JSON chunk
             }
           }
         }
@@ -310,10 +319,12 @@ export default function App() {
       }
 
       if (!success && !isClarification) {
-        throw new Error('Server stopped responding. Try a simpler prompt.');
+        console.error("Stream finished but success flag was not set. Possible server timeout.");
+        throw new Error('The server exceeded the time limit and stopped responding. Please try again');
       }
 
     } catch (error) {
+      console.error("handleGenerate failed with error:", error);
       const msg = error.name === 'TypeError' && error.message.includes('Failed to fetch')
         ? 'Unable to connect to the server. Please check your internet connection and try again.'
         : error.message;
@@ -335,23 +346,8 @@ export default function App() {
   };
 
   const getGrandTotal = () => {
-    let hotelTotal = 0, foodTotal = 0, transTotal = 0, actTotal = 0;
-    itinerary.forEach(day => {
-      hotelTotal += (day.hotel ? (day.hotel.cost_myr || 0) : 0) * numPax;
-      foodTotal += (day.daily_food_cost_myr || 0) * numPax;
-      transTotal += (day.transportation ? (day.transportation.cost_myr || 0) : 0) * numPax;
-      if (day.activities) {
-        day.activities.forEach(act => {
-          actTotal += (act.cost_myr || 0) * numPax;
-          if (act.transport_to_next) {
-            transTotal += (act.transport_to_next.estimated_cost_myr || 0) * numPax;
-          }
-        });
-      }
-    });
-    const flightCostPerPax = flightOptions[selectedFlightIdx] ? (flightOptions[selectedFlightIdx].cost_myr || 0) : 0;
-    const flightCostTotal = flightCostPerPax * numPax;
-    return Math.round(flightCostTotal + hotelTotal + foodTotal + transTotal + actTotal);
+    const b = getExpensesBreakdown();
+    return b.total;
   };
 
   const PILL_MAP = {
@@ -371,7 +367,7 @@ export default function App() {
     setSettleMessage('Processing...');
 
     try {
-      const response = await fetch('/api/settle', {
+      const response = await fetch(`${API_BASE}/api/settle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -394,15 +390,50 @@ export default function App() {
   };
 
   const getExpensesBreakdown = () => {
-    let hotel = 0, food = 0, trans = 0, act = 0;
+    // Per-pax costs: flight, food, activities, activity transport
+    // Shared costs: hotel (room, not per person), day transport
+    let hotelTotal = 0; // shared — per night, not per pax
+    let foodPerPax = 0;
+    let transTotal = 0; // shared — day-level transport
+    let transPerPax = 0; // activity-to-activity transport
+    let actPerPax = 0;
+
     itinerary.forEach(day => {
-      hotel += (day.hotel ? (day.hotel.cost_myr || 0) : 0) * numPax;
-      food += (day.daily_food_cost_myr || 0) * numPax;
-      trans += (day.transportation ? (day.transportation.cost_myr || 0) : 0) * numPax;
-      if (day.activities) day.activities.forEach(a => act += (a.cost_myr || 0) * numPax);
+      hotelTotal += (day.hotel?.cost_myr || 0);
+      foodPerPax += (day.daily_food_cost_myr || 0);
+      transTotal += (day.transportation?.cost_myr || 0);
+      if (day.activities) {
+        day.activities.forEach(a => {
+          actPerPax += (a.cost_myr || 0);
+          transPerPax += (a.transport_to_next?.estimated_cost_myr || 0);
+        });
+      }
     });
-    const flight = (flightOptions[selectedFlightIdx]?.cost_myr || 0) * numPax;
-    return { flight, hotel, food, trans, act, total: flight + hotel + food + trans + act };
+
+    const flightPerPax = flightOptions[selectedFlightIdx]?.cost_myr || 0;
+
+    // Total per person = flight + food + activities + activity transport + (hotel / numPax)
+    const hotelPerPax = numPax > 0 ? hotelTotal / numPax : hotelTotal;
+    const dayTransPerPax = numPax > 0 ? transTotal / numPax : transTotal;
+    const totalPerPax = flightPerPax + hotelPerPax + foodPerPax + dayTransPerPax + transPerPax + actPerPax;
+
+    // Group total
+    const flightGroup = flightPerPax * numPax;
+    const hotelGroup = hotelTotal; // already total for rooms
+    const foodGroup = foodPerPax * numPax;
+    const transGroup = transTotal + transPerPax * numPax; // shared day trans + per-pax activity trans
+    const actGroup = actPerPax * numPax;
+    const grandTotal = Math.round(flightGroup + hotelGroup + foodGroup + transGroup + actGroup);
+
+    return {
+      flight: { perPax: Math.round(flightPerPax), total: Math.round(flightGroup) },
+      hotel:  { perPax: Math.round(hotelPerPax), total: Math.round(hotelGroup) },
+      food:   { perPax: Math.round(foodPerPax), total: Math.round(foodGroup) },
+      trans:  { perPax: Math.round(dayTransPerPax + transPerPax), total: Math.round(transGroup) },
+      act:    { perPax: Math.round(actPerPax), total: Math.round(actGroup) },
+      totalPerPax: Math.round(totalPerPax),
+      total: grandTotal,
+    };
   };
 
   const handleAmend = async (dayIdx, itemType, itemIdx) => {
@@ -420,7 +451,7 @@ export default function App() {
     };
 
     try {
-      const response = await fetch('/api/amend-item', {
+      const response = await fetch(`${API_BASE}/api/amend-item`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ item_type: itemType, current_item, user_preference: editPreference, trip_summary })
@@ -516,7 +547,7 @@ export default function App() {
       {/* Completion Toast */}
       {showReadyToast && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[80] bg-green-500 text-white px-6 py-3 rounded-full shadow-lg font-sans font-medium flex items-center gap-2 animate-bounce">
-          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/></svg>
+          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
           Your trip is ready! Switching to itinerary...
         </div>
       )}
@@ -526,10 +557,10 @@ export default function App() {
         <div className="text-[#DE8170] mb-2">
           <Plane size={48} strokeWidth={1.5} />
         </div>
-        <h1 className="text-6xl font-bold tracking-tight text-[#3A332C] mb-4">
+        <h1 className="text-4xl md:text-6xl font-bold tracking-tight text-[#3A332C] mb-4 text-center">
           DaddiesTrip
         </h1>
-        <p className="text-xl text-gray-500 font-sans tracking-wide">
+        <p className="text-lg md:text-xl text-gray-500 font-sans tracking-wide text-center px-4">
           Your AI-powered travel orchestration companion
         </p>
       </header>
@@ -577,11 +608,11 @@ export default function App() {
       </div>
 
       {/* NAVIGATION TABS */}
-      <div className="flex justify-center mb-12">
-        <div className="bg-white rounded-full p-2 shadow-sm flex space-x-2 border border-gray-100">
+      <div className="flex justify-center mb-8 md:mb-12 px-4 w-full">
+        <div className="bg-white rounded-3xl md:rounded-full p-2 shadow-sm flex flex-col sm:flex-row gap-2 border border-gray-100 w-full sm:w-auto">
           <button
             onClick={() => setActiveTab('plan')}
-            className={`flex items-center px-8 py-3 rounded-full transition-all font-sans font-medium ${activeTab === 'plan'
+            className={`flex items-center justify-center px-6 md:px-8 py-3 rounded-full transition-all font-sans font-medium ${activeTab === 'plan'
               ? 'bg-[#DE8170] text-white shadow-md'
               : 'text-gray-600 hover:bg-gray-50'
               }`}
@@ -591,7 +622,7 @@ export default function App() {
           </button>
           <button
             onClick={() => setActiveTab('itinerary')}
-            className={`flex items-center px-8 py-3 rounded-full transition-all font-sans font-medium ${activeTab === 'itinerary'
+            className={`flex items-center justify-center px-6 md:px-8 py-3 rounded-full transition-all font-sans font-medium ${activeTab === 'itinerary'
               ? 'bg-[#DE8170] text-white shadow-md'
               : 'text-gray-600 hover:bg-gray-50'
               }`}
@@ -601,7 +632,7 @@ export default function App() {
           </button>
           <button
             onClick={() => setActiveTab('expenses')}
-            className={`flex items-center px-8 py-3 rounded-full transition-all font-sans font-medium ${activeTab === 'expenses'
+            className={`flex items-center justify-center px-6 md:px-8 py-3 rounded-full transition-all font-sans font-medium ${activeTab === 'expenses'
               ? 'bg-[#DE8170] text-white shadow-md'
               : 'text-gray-600 hover:bg-gray-50'
               }`}
@@ -613,14 +644,14 @@ export default function App() {
       </div>
 
       {/* MAIN CONTENT AREA */}
-      <main className="max-w-4xl mx-auto px-6 pb-24">
-        <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-8 min-h-[400px]">
+      <main className="max-w-4xl mx-auto px-4 sm:px-6 pb-24">
+        <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 p-5 sm:p-8 min-h-[400px]">
 
           {/* PLAN TRIP TAB */}
           {activeTab === 'plan' && (
             <div className="flex flex-col h-full font-sans">
-              <div className="flex items-start mb-6">
-                <div className="bg-[#DE8170] text-white p-3 rounded-full mr-4 shadow-sm flex-shrink-0">
+              <div className="flex flex-col sm:flex-row items-start mb-6">
+                <div className="bg-[#DE8170] text-white p-3 rounded-full mb-3 sm:mb-0 sm:mr-4 shadow-sm flex-shrink-0 self-start">
                   <Plane size={24} />
                 </div>
                 <div className="bg-[#FAF6F0] rounded-2xl rounded-tl-none p-6 text-gray-700 text-lg leading-relaxed shadow-sm border border-gray-100 max-w-2xl">
@@ -686,7 +717,7 @@ export default function App() {
                   {flightOptions.length > 0 && (
                     <>
                       <h3 className="text-xl font-bold text-gray-800 mb-4 px-2">Flight Options</h3>
-                      <div className="grid grid-cols-2 gap-6 mb-10">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
                         {flightOptions.map((opt, i) => {
                           const dep = opt.departure || {};
                           const ret = opt.return || {};
@@ -854,7 +885,7 @@ export default function App() {
                           )}
                         </div>
 
-                        <div className="ml-4 mt-6 flex gap-4">
+                        <div className="ml-4 mt-6 flex flex-col sm:flex-row gap-4">
                           <div className="flex-1 bg-gray-50 rounded-xl p-4 border border-gray-100">
                             <div className="flex items-center gap-2 mb-1">
                               <h5 className="font-bold text-gray-800 text-sm">🏨 Stay</h5>
@@ -967,22 +998,25 @@ export default function App() {
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-3 gap-6 mb-10">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6 mb-10">
                     <div className="bg-[#DE8170] text-white p-6 rounded-2xl shadow-md">
                       <p className="text-white/80 font-medium mb-1 text-sm flex items-center"><Receipt size={14} className="mr-2" /> Total Expenses</p>
-                      <h3 className="text-3xl font-serif font-bold">RM {getGrandTotal().toLocaleString()}</h3>
+                      <h3 className="text-3xl font-serif font-bold">RM {getExpensesBreakdown().total.toLocaleString()}</h3>
+                      <p className="text-white/60 text-xs mt-1">{numPax} traveler{numPax > 1 ? 's' : ''}</p>
                     </div>
                     <div className="bg-[#8E9F7F] text-white p-6 rounded-2xl shadow-md">
                       <p className="text-white/80 font-medium mb-1 text-sm flex items-center"><Calendar size={14} className="mr-2" /> Per Person</p>
-                      <h3 className="text-3xl font-serif font-bold">RM {splitData?.split_per_person_myr || Math.round(getGrandTotal() / numPax)}</h3>
+                      <h3 className="text-3xl font-serif font-bold">RM {getExpensesBreakdown().totalPerPax.toLocaleString()}</h3>
+                      <p className="text-white/60 text-xs mt-1">Split evenly</p>
                     </div>
                     <div className="bg-[#7D6B5A] text-white p-6 rounded-2xl shadow-md">
                       <p className="text-white/80 font-medium mb-1 text-sm flex items-center"><Plane size={14} className="mr-2" /> Local ({splitData?.destination_currency || 'MYR'})</p>
                       <h3 className="text-3xl font-serif font-bold">{splitData?.split_per_person_local || 0}</h3>
+                      <p className="text-white/60 text-xs mt-1">Per person in local currency</p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-12">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
                     {/* Expenses List */}
                     <div>
                       <div className="flex justify-between items-center mb-6">
@@ -990,66 +1024,69 @@ export default function App() {
                       </div>
 
                       <div className="space-y-6">
-                        {itinerary.map((day, idx) => {
-                          const hotelCost = (day.hotel?.cost_myr || 0) * numPax;
-                          if (hotelCost > 0 && (!idx || day.hotel?.name !== itinerary[idx - 1]?.hotel?.name)) {
-                            return (
-                              <div key={`h-${idx}`} className="flex justify-between items-start border-b border-gray-100 pb-4">
+                        {(() => {
+                          const b = getExpensesBreakdown();
+                          return (
+                            <>
+                              {flightOptions[selectedFlightIdx] && (
+                                <div className="flex justify-between items-start border-b border-gray-100 pb-4">
+                                  <div>
+                                    <h4 className="font-bold text-gray-800">✈️ Flight Tickets ({flightOptions[selectedFlightIdx].airline})</h4>
+                                    <p className="text-xs text-gray-500 mt-1">{numPax} traveler{numPax > 1 ? 's' : ''}</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="font-bold text-gray-800">RM {b.flight.total.toLocaleString()}</div>
+                                    <div className="text-xs text-gray-400">RM {b.flight.perPax.toLocaleString()}/pax</div>
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="flex justify-between items-start border-b border-gray-100 pb-4">
                                 <div>
-                                  <h4 className="font-bold text-gray-800">Hotel - {day.hotel?.name || 'Accommodation'}</h4>
-                                  <p className="text-xs text-gray-500 mt-1">Accommodation</p>
+                                  <h4 className="font-bold text-gray-800">🏨 Accommodation</h4>
+                                  <p className="text-xs text-gray-500 mt-1">Room rate (shared)</p>
                                 </div>
                                 <div className="text-right">
-                                  <div className="font-bold text-gray-800">RM {hotelCost}</div>
-                                  <div className="text-xs text-gray-400">RM {day.hotel.cost_myr} each</div>
+                                  <div className="font-bold text-gray-800">RM {b.hotel.total.toLocaleString()}</div>
+                                  <div className="text-xs text-gray-400">RM {b.hotel.perPax.toLocaleString()}/pax</div>
                                 </div>
                               </div>
-                            );
-                          }
-                          return null;
-                        })}
 
-                        {flightOptions[selectedFlightIdx] && (
-                          <div className="flex justify-between items-start border-b border-gray-100 pb-4">
-                            <div>
-                              <h4 className="font-bold text-gray-800">Flight Tickets ({flightOptions[selectedFlightIdx].airline})</h4>
-                              <p className="text-xs text-gray-500 mt-1">Transportation</p>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-bold text-gray-800">RM {flightOptions[selectedFlightIdx].cost_myr * numPax}</div>
-                              <div className="text-xs text-gray-400">RM {flightOptions[selectedFlightIdx].cost_myr} each</div>
-                            </div>
-                          </div>
-                        )}
-
-                        <div className="flex justify-between items-start border-b border-gray-100 pb-4">
-                          <div>
-                            <h4 className="font-bold text-gray-800">Food & Dining</h4>
-                            <p className="text-xs text-gray-500 mt-1">Estimated total</p>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-bold text-gray-800">RM {itinerary.reduce((acc, d) => acc + (d.daily_food_cost_myr || 0), 0) * numPax}</div>
-                            <div className="text-xs text-gray-400">RM {itinerary.reduce((acc, d) => acc + (d.daily_food_cost_myr || 0), 0)} each</div>
-                          </div>
-                        </div>
-
-                        {itinerary.some(d => (d.activities || []).some(a => a.transport_to_next?.estimated_cost_myr > 0)) && (
-                          <div className="flex justify-between items-start border-b border-gray-100 pb-4">
-                            <div>
-                              <h4 className="font-bold text-gray-800">Local Transport</h4>
-                              <p className="text-xs text-gray-500 mt-1">Taxi, Metro, Bus</p>
-                            </div>
-                            <div className="text-right">
-                              <div className="font-bold text-gray-800">
-                                RM {itinerary.reduce((acc, d) => acc + (d.activities || []).reduce((aAcc, a) => aAcc + (a.transport_to_next?.estimated_cost_myr || 0), 0), 0) * numPax}
+                              <div className="flex justify-between items-start border-b border-gray-100 pb-4">
+                                <div>
+                                  <h4 className="font-bold text-gray-800">🍜 Food & Dining</h4>
+                                  <p className="text-xs text-gray-500 mt-1">{numPax} traveler{numPax > 1 ? 's' : ''}</p>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-bold text-gray-800">RM {b.food.total.toLocaleString()}</div>
+                                  <div className="text-xs text-gray-400">RM {b.food.perPax.toLocaleString()}/pax</div>
+                                </div>
                               </div>
-                              <div className="text-xs text-gray-400">
-                                RM {itinerary.reduce((acc, d) => acc + (d.activities || []).reduce((aAcc, a) => aAcc + (a.transport_to_next?.estimated_cost_myr || 0), 0), 0)} each
-                              </div>
-                            </div>
-                          </div>
-                        )}
 
+                              <div className="flex justify-between items-start border-b border-gray-100 pb-4">
+                                <div>
+                                  <h4 className="font-bold text-gray-800">🚇 Transportation</h4>
+                                  <p className="text-xs text-gray-500 mt-1">Day transport + activity transit</p>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-bold text-gray-800">RM {b.trans.total.toLocaleString()}</div>
+                                  <div className="text-xs text-gray-400">RM {b.trans.perPax.toLocaleString()}/pax</div>
+                                </div>
+                              </div>
+
+                              <div className="flex justify-between items-start border-b border-gray-100 pb-4">
+                                <div>
+                                  <h4 className="font-bold text-gray-800">🎟️ Activities</h4>
+                                  <p className="text-xs text-gray-500 mt-1">{numPax} traveler{numPax > 1 ? 's' : ''}</p>
+                                </div>
+                                <div className="text-right">
+                                  <div className="font-bold text-gray-800">RM {b.act.total.toLocaleString()}</div>
+                                  <div className="text-xs text-gray-400">RM {b.act.perPax.toLocaleString()}/pax</div>
+                                </div>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
 
@@ -1082,30 +1119,43 @@ export default function App() {
 
       {/* Settlement Modal */}
       {showBudgetModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-6">
-          <div className="bg-white rounded-[2.5rem] shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-10 relative">
-            <button onClick={() => setShowBudgetModal(false)} className="absolute top-6 right-6 text-gray-400 hover:text-gray-600">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4 sm:p-6">
+          <div className="bg-white rounded-[2rem] sm:rounded-[2.5rem] shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-6 sm:p-10 relative">
+            <button onClick={() => setShowBudgetModal(false)} className="absolute top-4 right-4 sm:top-6 sm:right-6 text-gray-400 hover:text-gray-600">
               <X size={24} />
             </button>
 
-            <div className="grid grid-cols-2 gap-12">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-12">
               {/* Breakdown Table */}
               <div>
                 <h2 className="text-3xl font-serif font-bold text-gray-800 mb-6">Budget Breakdown</h2>
                 <div className="space-y-4 font-sans">
-                  {Object.entries(getExpensesBreakdown()).map(([key, val]) => {
-                    if (key === 'total') return null;
-                    const labels = { flight: '✈️ Flights', hotel: '🏨 Accommodation', food: '🍜 Food & Dining', trans: '🚇 Transportation', act: '🎟️ Activities' };
-                    return (
-                      <div key={key} className="flex justify-between py-2 border-b border-gray-100">
-                        <span className="text-gray-600">{labels[key]}</span>
-                        <span className="font-bold">RM {val.toLocaleString()}</span>
+                  {(() => {
+                    const b = getExpensesBreakdown();
+                    const rows = [
+                      { key: 'flight', label: '✈️ Flights', perPax: b.flight.perPax, total: b.flight.total },
+                      { key: 'hotel', label: '🏨 Accommodation', perPax: b.hotel.perPax, total: b.hotel.total },
+                      { key: 'food', label: '🍜 Food & Dining', perPax: b.food.perPax, total: b.food.total },
+                      { key: 'trans', label: '🚇 Transportation', perPax: b.trans.perPax, total: b.trans.total },
+                      { key: 'act', label: '🎟️ Activities', perPax: b.act.perPax, total: b.act.total },
+                    ];
+                    return rows.map(r => (
+                      <div key={r.key} className="flex justify-between items-center py-2 border-b border-gray-100">
+                        <span className="text-gray-600">{r.label}</span>
+                        <div className="text-right">
+                          <span className="font-bold">RM {r.total.toLocaleString()}</span>
+                          <span className="text-xs text-gray-400 ml-2">(RM {r.perPax.toLocaleString()}/pax)</span>
+                        </div>
                       </div>
-                    );
-                  })}
-                  <div className="flex justify-between py-4 bg-gray-50 px-4 rounded-xl mt-4">
-                    <span className="font-bold text-gray-800">Total (All Travelers)</span>
+                    ));
+                  })()}
+                  <div className="flex justify-between items-center py-4 bg-gray-50 px-4 rounded-xl mt-4">
+                    <span className="font-bold text-gray-800">Total ({numPax} traveler{numPax > 1 ? 's' : ''})</span>
                     <span className="font-bold text-[#DE8170] text-xl">RM {getExpensesBreakdown().total.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between items-center py-3 bg-[#8E9F7F]/10 px-4 rounded-xl">
+                    <span className="font-bold text-[#8E9F7F]">Per Person</span>
+                    <span className="font-bold text-[#8E9F7F] text-xl">RM {getExpensesBreakdown().totalPerPax.toLocaleString()}</span>
                   </div>
                 </div>
               </div>
@@ -1226,16 +1276,14 @@ export default function App() {
                 {bookingSteps.map((step, idx) => (
                   <div
                     key={idx}
-                    className={`flex items-center gap-4 p-3 rounded-xl transition-all duration-500 ${
-                      step.status === 'active' ? 'bg-[#DE8170]/5 scale-[1.02]' :
-                      step.status === 'done' ? 'bg-green-50' : 'opacity-40'
-                    }`}
+                    className={`flex items-center gap-4 p-3 rounded-xl transition-all duration-500 ${step.status === 'active' ? 'bg-[#DE8170]/5 scale-[1.02]' :
+                        step.status === 'done' ? 'bg-green-50' : 'opacity-40'
+                      }`}
                   >
                     <span className="text-2xl w-10 text-center">{step.icon}</span>
-                    <span className={`flex-1 font-sans text-sm font-medium ${
-                      step.status === 'active' ? 'text-[#DE8170]' :
-                      step.status === 'done' ? 'text-green-700' : 'text-gray-400'
-                    }`}>
+                    <span className={`flex-1 font-sans text-sm font-medium ${step.status === 'active' ? 'text-[#DE8170]' :
+                        step.status === 'done' ? 'text-green-700' : 'text-gray-400'
+                      }`}>
                       {step.label}
                     </span>
                     {step.status === 'active' && (

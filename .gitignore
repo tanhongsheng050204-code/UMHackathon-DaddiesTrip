@@ -11,3 +11,4 @@ build/
 frontend/.vite/*
 backend/__pycache__/*
 backend/agents/__pycache__/*
+.claude/

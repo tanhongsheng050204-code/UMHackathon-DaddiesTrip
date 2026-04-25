@@ -1,3 +1,6 @@
+// API base URL — set via window.VITE_API_BASE_URL before this script loads, or leave empty for same-origin
+var API_BASE = window.VITE_API_BASE_URL || '';
+
 document.getElementById('generate-btn').addEventListener('click', async () => {
     const prompt = document.getElementById('prompt-input').value;
     if (!prompt) return;
@@ -32,7 +35,7 @@ document.getElementById('generate-btn').addEventListener('click', async () => {
     startProgress();
 
     try {
-        const response = await fetch('/api/plan-trip-stream', {
+        const response = await fetch(API_BASE + '/api/plan-trip-stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ prompt })
@@ -653,11 +656,31 @@ function renderLedger(split, itinerary, flights, numPax, budgetMyr) {
     numParticipants = numPax;
     if (!split || !split.primary_currency) return;
     currentTripData = { split, itinerary, flights, numPax, budgetMyr };
-    // Display total that will be reconciled when modal opens
-    document.getElementById('total-cost').innerText = `RM ${split.total_myr} (${numPax} pax)`;
-    document.getElementById('split-person').innerText = `RM ${split.split_per_person_myr}`;
+
+    // Compute actual per-pax from local data for accuracy
+    let hotelTotal = 0, foodPerPax = 0, transTotal = 0, transPerPax = 0, actPerPax = 0;
+    itinerary.forEach(day => {
+        hotelTotal += (day.hotel ? (day.hotel.cost_myr || 0) : 0);
+        foodPerPax += (day.daily_food_cost_myr || 0);
+        transTotal += (day.transportation ? (day.transportation.cost_myr || 0) : 0);
+        if (day.activities) day.activities.forEach(act => {
+            actPerPax += (act.cost_myr || 0);
+            transPerPax += (act.transport_to_next ? (act.transport_to_next.estimated_cost_myr || 0) : 0);
+        });
+    });
+    const flightPerPax = selectedFlightOption ? (selectedFlightOption.cost_myr || 0) : (flights ? (flights.cost_myr || 0) : 0);
+    const hotelPerPax = numPax > 0 ? hotelTotal / numPax : hotelTotal;
+    const dayTransPerPax = numPax > 0 ? transTotal / numPax : transTotal;
+    const computedPerPax = Math.round(flightPerPax + hotelPerPax + foodPerPax + dayTransPerPax + transPerPax + actPerPax);
+    const computedTotal = computedPerPax * numPax;
+
+    const fx = (split.split_per_person_local && split.split_per_person_myr) ? split.split_per_person_local / split.split_per_person_myr : 1;
+    const localPerPax = Math.round(computedPerPax * fx * 100) / 100;
+
+    document.getElementById('total-cost').innerText = `RM ${computedTotal.toLocaleString()} (${numPax} pax)`;
+    document.getElementById('split-person').innerText = `RM ${computedPerPax.toLocaleString()}`;
     document.getElementById('local-currency-label').innerText = `Local (${split.destination_currency})`;
-    document.getElementById('split-local').innerText = `${split.split_per_person_local} ${split.destination_currency}`;
+    document.getElementById('split-local').innerText = `${localPerPax.toLocaleString()} ${split.destination_currency}`;
 }
 
 document.getElementById('review-budget-btn').addEventListener('click', () => {
@@ -673,30 +696,47 @@ document.getElementById('close-budget-btn').addEventListener('click', () => {
 function populateAccountingTable(data) {
     const { split, itinerary, flights, numPax } = data;
     const n = numPax || 1;
-    let hotelTotal = 0, foodTotal = 0, transTotal = 0, actTotal = 0;
+
+    // Per-pax costs: flight, food, activities, activity transport
+    // Shared costs: hotel (room rate, not per person), day transport
+    let hotelTotal = 0;
+    let foodPerPax = 0;
+    let transTotal = 0;      // shared day transport
+    let transPerPax = 0;     // activity-to-activity transport
+    let actPerPax = 0;
+
     itinerary.forEach(day => {
-        hotelTotal += (day.hotel ? (day.hotel.cost_myr || 0) : 0) * n;
-        foodTotal += (day.daily_food_cost_myr || 0) * n;
-        transTotal += (day.transportation ? (day.transportation.cost_myr || 0) : 0) * n;
-        if (day.activities) day.activities.forEach(act => actTotal += (act.cost_myr || 0) * n);
+        hotelTotal += (day.hotel ? (day.hotel.cost_myr || 0) : 0);
+        foodPerPax += (day.daily_food_cost_myr || 0);
+        transTotal += (day.transportation ? (day.transportation.cost_myr || 0) : 0);
+        if (day.activities) day.activities.forEach(act => {
+            actPerPax += (act.cost_myr || 0);
+            transPerPax += (act.transport_to_next ? (act.transport_to_next.estimated_cost_myr || 0) : 0);
+        });
     });
-    const flightCostPerPax = selectedFlightOption ? (selectedFlightOption.cost_myr || 0) : (flights ? (flights.cost_myr || 0) : 0);
-    const flightCostTotal = flightCostPerPax * n;
 
-    // Compute grand total from itemized sums (source of truth for all pax)
-    const grandTotal = Math.round(flightCostTotal + hotelTotal + foodTotal + transTotal + actTotal);
+    const flightPerPax = selectedFlightOption ? (selectedFlightOption.cost_myr || 0) : (flights ? (flights.cost_myr || 0) : 0);
+    const hotelPerPax = n > 0 ? hotelTotal / n : hotelTotal;
+    const dayTransPerPax = n > 0 ? transTotal / n : transTotal;
 
-    document.getElementById('acc-flights').innerText = `RM ${flightCostTotal} (${n} pax × RM ${flightCostPerPax})`;
-    document.getElementById('acc-hotel').innerText = `RM ${hotelTotal} (${n} pax)`;
-    document.getElementById('acc-food').innerText = `RM ${foodTotal} (${n} pax)`;
-    document.getElementById('acc-trans').innerText = `RM ${transTotal} (${n} pax)`;
-    document.getElementById('acc-act').innerText = `RM ${actTotal} (${n} pax)`;
-    // Use locally computed total — reliable for all pax regardless of LLM response
-    document.getElementById('acc-total').innerText = `RM ${grandTotal} (${n} pax)`;
-    // Also update the summary card total to match
-    document.getElementById('total-cost').innerText = `RM ${grandTotal} (${n} pax)`;
+    const flightGroup = Math.round(flightPerPax * n);
+    const hotelGroup = Math.round(hotelTotal);
+    const foodGroup = Math.round(foodPerPax * n);
+    const transGroup = Math.round(transTotal + transPerPax * n);
+    const actGroup = Math.round(actPerPax * n);
 
-    // Recalculate budget banner to match accounting total (fix mismatch)
+    const grandTotal = flightGroup + hotelGroup + foodGroup + transGroup + actGroup;
+    const totalPerPax = Math.round(flightPerPax + hotelPerPax + foodPerPax + dayTransPerPax + transPerPax + actPerPax);
+
+    document.getElementById('acc-flights').innerText = `RM ${flightGroup.toLocaleString()} (RM ${Math.round(flightPerPax).toLocaleString()}/pax)`;
+    document.getElementById('acc-hotel').innerText = `RM ${hotelGroup.toLocaleString()} (RM ${Math.round(hotelPerPax).toLocaleString()}/pax)`;
+    document.getElementById('acc-food').innerText = `RM ${foodGroup.toLocaleString()} (RM ${Math.round(foodPerPax).toLocaleString()}/pax)`;
+    document.getElementById('acc-trans').innerText = `RM ${transGroup.toLocaleString()} (RM ${Math.round(dayTransPerPax + transPerPax).toLocaleString()}/pax)`;
+    document.getElementById('acc-act').innerText = `RM ${actGroup.toLocaleString()} (RM ${Math.round(actPerPax).toLocaleString()}/pax)`;
+    document.getElementById('acc-total').innerText = `RM ${grandTotal.toLocaleString()} (${n} pax)`;
+    document.getElementById('total-cost').innerText = `RM ${grandTotal.toLocaleString()} (${n} pax)`;
+
+    // Recalculate budget banner
     const budgetLimit = data.budgetMyr || 0;
     if (budgetLimit > 0) {
         const surplus = budgetLimit - grandTotal;
@@ -749,7 +789,7 @@ document.getElementById('settle-btn').addEventListener('click', async () => {
     statusText.innerText = 'Processing...';
     setTimeout(async () => {
         try {
-            const response = await fetch('/api/settle', {
+            const response = await fetch(API_BASE + '/api/settle', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ group_id: "group_123", user_id: "user_1", card_number: cardInput })
