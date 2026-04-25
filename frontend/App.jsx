@@ -224,116 +224,101 @@ export default function App() {
     setOverlayState('loading');
     setErrorMsg('');
     setClarificationMsg('');
-    setProgressStatus('Validating your request...');
-    setProgressPercent(10);
+    setProgressStatus('Initializing orchestrator...');
+    setProgressPercent(0);
     setFlightOptions([]);
     setItinerary([]);
     setSplitData(null);
     setTripData(null);
 
-    const handleHttpError = (response) => {
-      let errDetail = `HTTP ${response.status}`;
-      if (response.status === 504 || response.status === 502) {
-        errDetail = 'The AI service is temporarily unavailable (gateway timeout). Please wait a moment and try again.';
-      } else if (response.status === 429) {
-        errDetail = 'Too many requests. Please wait a moment and try again.';
-      } else if (response.status >= 500) {
-        errDetail = `Server error (HTTP ${response.status}). Please try again later.`;
-      } else {
-        try { const errData = response.json(); errDetail = errData.detail || errDetail; } catch (_) { }
-      }
-      return errDetail;
-    };
+    let success = false;
+    let isClarification = false;
 
     try {
-      // Step 1: Analyze
-      setProgressStatus('Validating your request...');
-      setProgressPercent(10);
-      const analyzeRes = await fetch('/api/analyze', {
+      const response = await fetch('/api/plan-trip-stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt })
       });
 
-      if (!analyzeRes.ok) {
-        throw new Error(handleHttpError(analyzeRes));
+      if (!response.ok) {
+        let errDetail = `HTTP ${response.status}`;
+        if (response.status === 504 || response.status === 502) {
+          errDetail = 'The AI service is temporarily unavailable (gateway timeout). Please wait a moment and try again.';
+        } else if (response.status === 429) {
+          errDetail = 'Too many requests. Please wait a moment and try again.';
+        } else if (response.status >= 500) {
+          errDetail = `Server error (HTTP ${response.status}). Please try again later.`;
+        } else {
+          try { const errData = await response.json(); errDetail = errData.detail || errDetail; } catch (_) { }
+        }
+        console.error("Fetch response error:", response.status, errDetail);
+        throw new Error(errDetail);
       }
 
-      const analyzeData = await analyzeRes.json();
-      if (analyzeData.status === 'invalid') {
-        setClarificationMsg(analyzeData.message || 'Please provide more details about your trip.');
-        setMissingFields(analyzeData.missing_fields || []);
-        setOverlayState('hidden');
-        return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        let lines = buffer.split('\n\n');
+        buffer = lines.pop();
+
+        for (let line of lines) {
+          if (line.startsWith('data: ')) {
+            const dataStr = line.substring(6);
+            try {
+              const event = JSON.parse(dataStr);
+              console.log("SSE Event Received:", event.type, event);
+              if (event.type === 'progress') {
+                setProgressStatus(event.text);
+                setProgressPercent(p => Math.min(p + 15, 95));
+              } else if (event.type === 'error') {
+                console.error("SSE Error Event:", event.message);
+                throw new Error(event.message);
+              } else if (event.type === 'clarification') {
+                setClarificationMsg(event.message);
+                setMissingFields(event.missing_fields || []);
+                isClarification = true;
+                break;
+              } else if (event.type === 'partial_itinerary') {
+                setItinerary(event.days || []);
+                setNumPax(event.num_participants || 1);
+              } else if (event.type === 'partial_flights') {
+                setFlightOptions(event.flight_options || []);
+                setNumPax(event.num_participants || 1);
+              } else if (event.type === 'complete') {
+                const data = event.data;
+                const nPax = data.num_participants || data.participants?.length || 1;
+                setNumPax(nPax);
+                setFlightOptions(data.flight_options?.length ? data.flight_options : (data.flights ? [data.flights] : []));
+                setItinerary(data.itinerary || []);
+                setSplitData(data.split);
+                setTripData(data);
+                setProgressPercent(100);
+                setProgressStatus('Done!');
+                success = true;
+                console.log("Generation complete! Trip data:", data);
+              }
+            } catch (e) {
+              if (e.message !== "Unexpected end of JSON input" && !e.message.includes("JSON")) {
+                console.error("Error processing SSE event:", e);
+                throw e; // Rethrow actual errors thrown via throw new Error(event.message)
+              }
+              // Not a real error, just a partial JSON chunk
+            }
+          }
+        }
+        if (isClarification) break;
       }
 
-      // Step 2: Plan
-      setProgressStatus('Planning your itinerary route...');
-      setProgressPercent(30);
-      const planRes = await fetch('/api/plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt })
-      });
-
-      if (!planRes.ok) {
-        throw new Error(handleHttpError(planRes));
-      }
-
-      const planData = await planRes.json();
-
-      if (planData.status === 'clarification') {
-        setClarificationMsg(planData.message || 'Please provide more details about your trip.');
-        setMissingFields(planData.missing_fields || []);
-        setOverlayState('hidden');
-        return;
-      }
-
-      // Show partial itinerary immediately
-      if (planData.partial_days) {
-        setItinerary(planData.partial_days);
-        setNumPax(planData.num_participants || 1);
-      }
-
-      // Step 3: Booking + Finalize
-      setProgressStatus('Searching flights, hotels & activities...');
-      setProgressPercent(60);
-      const bookingRes = await fetch('/api/booking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          itinerary_draft: planData.itinerary_draft,
-          trip_summary: planData.trip_summary,
-          participants: planData.participants,
-          num_participants: planData.num_participants,
-        })
-      });
-
-      if (!bookingRes.ok) {
-        throw new Error(handleHttpError(bookingRes));
-      }
-
-      const bookingData = await bookingRes.json();
-
-      if (bookingData.status === 'success' && bookingData.data) {
-        const data = bookingData.data;
-        const nPax = data.num_participants || data.participants?.length || 1;
-        setNumPax(nPax);
-        setFlightOptions(data.flight_options?.length ? data.flight_options : (data.flights ? [data.flights] : []));
-        setItinerary(data.itinerary || []);
-        setSplitData(data.split);
-        setTripData(data);
-        setProgressPercent(100);
-        setProgressStatus('Done!');
-
-        setShowReadyToast(true);
-        setTimeout(() => setOverlayState('hidden'), 500);
-        setTimeout(() => {
-          setShowReadyToast(false);
-          setActiveTab('itinerary');
-        }, 2000);
-      } else {
-        throw new Error('Booking returned unexpected data. Please try again.');
+      if (!success && !isClarification) {
+        console.error("Stream finished but success flag was not set. Possible server timeout.");
+        throw new Error('The server exceeded the time limit and stopped responding. Please try again');
       }
 
     } catch (error) {
@@ -343,6 +328,18 @@ export default function App() {
         : error.message;
       setErrorMsg(msg);
       setOverlayState('error');
+      return; // Early return to prevent hiding overlay
+    }
+
+    if (success) {
+      setShowReadyToast(true);
+      setTimeout(() => setOverlayState('hidden'), 500);
+      setTimeout(() => {
+        setShowReadyToast(false);
+        setActiveTab('itinerary');
+      }, 2000);
+    } else if (isClarification) {
+      setOverlayState('hidden');
     }
   };
 
