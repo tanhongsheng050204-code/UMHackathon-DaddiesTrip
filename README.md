@@ -2,8 +2,12 @@
   <img src="frontend/logo.jpeg" alt="DaddiesTrip Logo" width="150" style="border-radius: 20px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-bottom: 20px;">
 
   <h1>DaddiesTrip</h1>
-  
+
   <p><strong>An AI-Enabled Cross-Border Travel Orchestration & Group Accounting Platform</strong></p>
+
+  <p>
+    <a href="https://daddies-trip.vercel.app/"><strong>Live Demo</strong></a>
+  </p>
 
   [![Vite](https://img.shields.io/badge/Vite-B73BFE?style=for-the-badge&logo=vite&logoColor=FFD62E)](https://vitejs.dev/)
   [![React](https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)](https://reactjs.org/)
@@ -219,5 +223,5 @@ python -m pytest backend/tests/test_agents.py
 
 ---
 <div align="center">
-  <i>Engineered by UTM's students</i>
+  <i>Engineered with ❤️ by UTM's students</i>
 </div>
